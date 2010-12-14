@@ -21,52 +21,36 @@
 ################################################################################
 import random, string
 from pylons import g
-from Captcha.Base import randomIdentifier
-from Captcha.Visual import Text, Backgrounds, Distortions, ImageCaptcha
+import urllib
+import urllib2
+import sha
 
 from r2.lib.cache import make_key
 
-IDEN_LENGTH = 32
-SOL_LENGTH = 6
-
-class RandCaptcha(ImageCaptcha):
-    defaultSize = (120, 50)
-    fontFactory = Text.FontFactory(18, "vera/VeraBd.ttf")
-
-    def getLayers(self, solution="blah"):
-        self.addSolution(solution)
-        return ((Backgrounds.Grid(size=8, foreground="white"),
-                 Distortions.SineWarp(amplitudeRange=(5,9))),
-                (Text.TextLayer(solution,
-                               textColor = 'white',
-                               fontFactory = self.fontFactory),
-                 Distortions.SineWarp()))
-
-def get_iden():
-    return randomIdentifier(length=IDEN_LENGTH)
-
-def make_solution():
-    return randomIdentifier(alphabet=string.ascii_letters, length = SOL_LENGTH).upper()
-
-def get_image(iden):
-    key = make_key(iden)
-    solution = g.cache.get(key)
-    if not solution:
-        solution = make_solution()
-        g.cache.set(key, solution, time = 300)
-    return RandCaptcha(solution=solution).render()
-
-def valid_solution(iden, solution):
-    key = make_key(iden)
-
-    if (not iden
-        or not solution
-        or len(iden) != IDEN_LENGTH
-        or len(solution) != SOL_LENGTH
-        or solution.upper() != g.cache.get(key)):
-        solution = make_solution()
-        g.cache.set(key, solution, time = 300)
+def valid_solution(challenge, response, remoteip):
+    req = urllib2.Request( 'http://api.solvemedia.com/papi/verify',
+                           urllib.urlencode( {
+                              'privatekey'  : g.solve_privkey,
+                              'remoteip'    : remoteip,
+                              'challenge'   : challenge,
+                              'response'	: response,
+                           } ), {
+                              'User-Agent'  : 'solvemedia-python-client',
+                           } )
+    try:
+        resp = urllib2.urlopen(req)
+    except:
         return False
-    else:
-        g.cache.delete(key)
+    line = resp.read().splitlines()
+    # validate message authenticator
+
+    if g.solve_hashkey:
+        hash = sha.new( line[0] + challenge + g.solve_hashkey ).hexdigest()
+        if hash != line[2]:
+            return False #'error' : 'hash-fail' 
+
+    if line[0] == 'true':
         return True
+    else:
+        return False
+

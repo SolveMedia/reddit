@@ -60,7 +60,7 @@
   </dl>
 <p>
   Or, if none of these solve your problem,&#32;
-  <a href="#" onclick="$('#feedback-form').slideDown(function(){$(this).find('input[type=text]:first').focus();}); return false;">
+  <a href="#" onclick="$('#feedback-form').slideDown(function(){$(this).find('input[type=text]:first').focus(); $.request('new_captcha');}); return false;">
     send a message to our feedback.
   </a> 
 </p>

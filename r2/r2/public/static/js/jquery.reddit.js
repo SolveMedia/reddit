@@ -582,15 +582,28 @@ $.set_tracker = function(id, show_track, click_track) {
 };
 
 
-$.fn.captcha = function(iden) {
-    /*  */
-    var c = this.find(".capimage");
-    if(iden) {
-        c.attr("src", "http://" + reddit.ajax_domain 
-               + "/captcha/" + iden + ".png")
-            .parents("form").find("input[name=iden]").attr("value", iden);
+$.fn.captcha = function(pubkey, puzz_id, error) {
+    if (typeof(ACPuzzle) == 'undefined') {
+        p_id = (typeof(puzz_id) == 'undefined') ? '' : puzz_id;
+        err = (typeof(error) == 'undefined') ? '' : error;
+        setTimeout("jQuery('body').captcha('"+pubkey+"','"+p_id+"','"+err+"')", 1000);
+        return;
     }
-    return c;
+    if (typeof(puzz_id) != 'undefined' && puzz_id.length > 0) {
+        ACPuzzle.reload(puzz_id);
+    } else {
+        var puzzles = jQuery('body').find('div[id^="sm_widget-"]');
+        puzzles.each(function(index) {
+            var puzzle_id = puzzles[index].id.match(/(?:sm_widget-)(.+)/)[1];
+	    if ($('#sm_widget-'+puzzle_id).closest('#sharelink_').length)
+		return;
+            if (jQuery('#adcopy-outer-'+puzzle_id).length)
+                return;
+            jQuery('#puzzle_id-'+puzzle_id).attr('value', puzzle_id);
+            eval('ACPuzzleOptions_'+puzzle_id+'={multi: true, theme: "white", id : "'+puzzle_id+'"};');
+            eval('ACPuzzle.create(pubkey, "sm_widget-'+puzzle_id+'", ACPuzzleOptions_'+puzzle_id+');');
+        });
+    }
 };
    
 

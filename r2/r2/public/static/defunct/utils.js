@@ -427,12 +427,9 @@ function handleResponse(action) {
         }
         if (r.captcha) {
             if (r.captcha.refresh) {
-                var id = r.captcha.id;
-                var captcha = $("capimage" + (id?('_'+id):''));
-                var capiden = $("capiden" + (id?('_'+id):''));
-                capiden.value = r.captcha.iden;
-                captcha.src = ("/captcha/" + r.captcha.iden + ".png?" +
-                               Math.random())
+                if (typof(eval('ACPuzzleOptions_'+r.captcha.id)) != 'undefined') {
+                    eval('ACPuzzle.reload("'+r.captcha.id+'");');
+                }
             }
         }
         if (r.success) {

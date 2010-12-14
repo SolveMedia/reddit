@@ -34,7 +34,6 @@ from pylons.controllers.util import abort
 
 from r2.lib import promote
 from r2.lib.traffic import load_traffic, load_summary
-from r2.lib.captcha import get_iden
 from r2.lib.contrib.markdown import markdown
 from r2.lib.filters import spaceCompress, _force_unicode, _force_utf8
 from r2.lib.filters import unsafe, websafe, SC_ON, SC_OFF, websafe_json
@@ -62,7 +61,7 @@ datefmt = _force_utf8(_('%d %b %Y'))
 
 def get_captcha():
     if not c.user_is_loggedin or c.user.needs_captcha():
-        return get_iden()
+        return True
 
 def responsive(res, space_compress = False):
     """

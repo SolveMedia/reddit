@@ -201,8 +201,8 @@ def validatedForm(self, self_method, responder, simple_vals, param_vals,
     # auto-refresh the captcha if there are errors.
     if (c.errors.errors and
         any(isinstance(v, VCaptcha) for v in simple_vals)):
-        form.has_errors('captcha', errors.BAD_CAPTCHA)
-        form.new_captcha()
+        form.has_errors('adcopy_response', errors.BAD_CAPTCHA)
+        form.new_captcha(puzz_id = request.POST['puzzle_id'], error="ERROR")
     
     # do the actual work
     val = self_method(self, form, responder, *a, **kw)
@@ -547,11 +547,11 @@ class VByNameIfAuthor(VByName):
         return self.set_error(errors.NOT_AUTHOR)
 
 class VCaptcha(Validator):
-    default_param = ('iden', 'captcha')
+    default_param = ('adcopy_challenge', 'adcopy_response')
     
-    def run(self, iden, solution):
+    def run(self, challenge, response):
         if (not c.user_is_loggedin or c.user.needs_captcha()):
-            if not captcha.valid_solution(iden, solution):
+            if not captcha.valid_solution(challenge, response, request.ip):
                 self.set_error(errors.BAD_CAPTCHA)
 
 class VUser(Validator):

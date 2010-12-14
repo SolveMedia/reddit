@@ -21,6 +21,7 @@
 ################################################################################
 
 <%! from r2.lib.template_helpers import static %>
+<%! import uuid %>
 
 <%namespace file="utils.html" import="error_field"/>
 <%namespace name="utils" file="utils.html"/>
@@ -29,40 +30,37 @@
 
 ${rounded_captcha()}
 
-<%def name="captcha_basics(iden='')">
-  <%
-    iden = getattr(thing, "iden", iden)
-  %>
-  <input name="iden" value="${iden}" type="hidden"/>
+<%def name="captcha_basics(id)">
 
-  <img class="capimage"
-       alt="i wonder if these things even work" 
-       %if hasattr(thing, "iden"):
-       src="/captcha/${thing.iden}.png" 
-       %else:
-       src="${static('kill.png')}" 
-       %endif
-       />
+    <div id="sm_widget_area-${id}">
+        <div id="sm_widget-${id}"></div>
+        <input type="hidden" name="puzzle_id" id="puzzle_id-${id}" value="${id}"/>
+    </div>
 </%def>
 
 <%def name="rounded_captcha()">
 <%utils:round_field title="${_('are you human?')}" description="${_('(sorry)')}" css_class="captcha">
-    ${captcha_basics()}
-    <input name="captcha" class="captcha" type="text" />
-    ${error_field("BAD_CAPTCHA", "captcha")}
+    <% id = uuid.uuid4().hex %>
+    ${captcha_basics(id)}
+    ${error_field("BAD_CAPTCHA", "adcopy_response")}
   </%utils:round_field>
 </%def>
 
-<%def name="captchagen(iden, error='', tabulate=False, tabular = True, size=60, label=True, show_error = True)">
+<%def name="captchagen(iden='', error='', tabulate=False, tabular = True, size=60, label=True, show_error = True)">
 %if tabulate:
 <table>
 %endif
   %if tabular:
   <tr>
-    <td></td>
+    <th>
+    %if label:
+      <label for="adcopy_response">${_("are you human?")}</label>
+    %endif
+    </th>
     <td>
   %endif
-  ${captcha_basics(iden)}
+    <% id = uuid.uuid4().hex %>
+    ${captcha_basics(id)}
   %if tabular:
   </td>
   </tr>
@@ -71,18 +69,6 @@ ${rounded_captcha()}
   %else:
      <span class="cap-reply">
   %endif
-       %if label:
-         <label for="captcha_">${_("human?")}</label>
-       %endif
-     %if tabular:
-     </td>
-     <td>
-     %endif
-          <input class="captcha cap-text" id="captcha_"
-               name="captcha" type="text" size="${size}" />
-        <script type="text/javascript">
-          emptyInput($('input.captcha'), "${_('type the letters from the image above')}");
-        </script>
      %if tabular:
      </td>
      <td>
@@ -90,7 +76,7 @@ ${rounded_captcha()}
      </span>
      %endif
      %if show_error:
-       ${error_field("BAD_CAPTCHA", "captcha")}
+       ${error_field("BAD_CAPTCHA", "adcopy_response")}
      %endif
   %if tabular:
     </td>

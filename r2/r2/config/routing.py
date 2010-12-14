@@ -219,8 +219,6 @@ def make_map(global_conf={}, app_conf={}):
 
     mc("/button_info", controller="api", action="info", limit = 1)
 
-    mc('/captcha/:iden', controller='captcha', action='captchaimg')
-
     mc('/mediaembed/:link', controller="mediaembed", action="mediaembed")
 
     mc('/doquery', controller='query', action='doquery')

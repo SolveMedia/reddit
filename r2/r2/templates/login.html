@@ -101,8 +101,7 @@
           ${error_field("BAD_PASSWORD_MATCH", "passwd2", kind="span")}
         </li>
         <li>
-          <% iden = hasattr(thing, "captcha") and thing.captcha.iden or '' %>
-          ${captchagen(iden, tabulate=True, label=False, size=30)}
+          ${captchagen(tabulate=True, label=True, size=30)}
           ${error_field("RATELIMIT", "ratelimit")}
         </li>
       %endif

@@ -22,7 +22,7 @@
 from reddit_base import RedditController, MinimalController, set_user_cookie
 
 from pylons.i18n import _
-from pylons import c, request
+from pylons import c, request, g
 
 from validator import *
 
@@ -39,7 +39,6 @@ from r2.lib.pages.things import wrap_links, default_thing_wrapper
 
 from r2.lib import spreadshirt
 from r2.lib.menus import CommentSortMenu
-from r2.lib.captcha import get_iden
 from r2.lib.strings import strings
 from r2.lib.filters import _force_unicode, websafe_json, websafe, spaceCompress
 from r2.lib.db import queries
@@ -143,7 +142,7 @@ class ApiController(RedditController):
         if not (form.has_errors('name',     errors.NO_NAME) or
                 form.has_errors('email',    errors.BAD_EMAILS) or
                 form.has_errors('text', errors.NO_TEXT) or
-                form.has_errors('captcha', errors.BAD_CAPTCHA)):
+                form.has_errors('adcopy_response', errors.BAD_CAPTCHA)):
 
             if reason == 'ad_inq':
                 emailer.ad_inq_email(email, message, name, reply_to = '')
@@ -153,7 +152,7 @@ class ApiController(RedditController):
                 emailer.feedback_email(email, message, name, reply_to = '')
             form.set_html(".status", _("thanks for your message! "
                             "you should hear back from us shortly."))
-            form.set_inputs(text = "", captcha = "")
+            form.set_inputs(text = "", adcopy_response = "")
             form.find(".spacer").hide()
             form.find(".btn").hide()
 
@@ -175,11 +174,11 @@ class ApiController(RedditController):
                                 errors.NO_USER, errors.SUBREDDIT_NOEXIST) or
                 form.has_errors("subject", errors.NO_SUBJECT) or
                 form.has_errors("text", errors.NO_TEXT, errors.TOO_LONG) or
-                form.has_errors("captcha", errors.BAD_CAPTCHA)):
+                form.has_errors("adcopy_response", errors.BAD_CAPTCHA)):
 
             m, inbox_rel = Message._new(c.user, to, subject, body, ip)
             form.set_html(".status", _("your message has been delivered"))
-            form.set_inputs(to = "", subject = "", text = "", captcha="")
+            form.set_inputs(to = "", subject = "", text = "", adcopy_response="")
 
             queries.new_message(m, inbox_rel)
 
@@ -419,7 +418,7 @@ class ApiController(RedditController):
                 form.has_errors("passwd", errors.BAD_PASSWORD) or
                 form.has_errors("passwd2", errors.BAD_PASSWORD_MATCH) or
                 form.has_errors('ratelimit', errors.RATELIMIT) or
-                form.has_errors('captcha', errors.BAD_CAPTCHA)):
+                form.has_errors('adcopy_response', errors.BAD_CAPTCHA)):
 
             user = register(name, password)
             VRatelimit.ratelimit(rate_ip = True, prefix = "rate_register_")
@@ -864,7 +863,6 @@ class ApiController(RedditController):
                    thing = VByName('parent'))
     def POST_share(self, shareform, jquery, emails, thing, share_from, reply_to,
                    message):
-
         # remove the ratelimit error if the user's karma is high
         sr = thing.subreddit_slow
         should_ratelimit = sr.should_ratelimit(c.user, 'link')
@@ -886,7 +884,7 @@ class ApiController(RedditController):
                                   errors.TOO_MANY_EMAILS):
             shareform.find(".share-to-errors").children().hide()
         # lastly, check the captcha.
-        elif shareform.has_errors("captcha", errors.BAD_CAPTCHA):
+        elif shareform.has_errors("adcopy_response", errors.BAD_CAPTCHA):
             pass
         elif shareform.has_errors("ratelimit", errors.RATELIMIT):
             pass
@@ -1865,7 +1863,7 @@ class ApiController(RedditController):
 
     @validatedForm()
     def POST_new_captcha(self, form, jquery, *a, **kw):
-        jquery("body").captcha(get_iden())
+        jquery("body").captcha(g.solve_pubkey)
 
     @noresponse(VAdmin(),
                 tr = VTranslation("lang"), 

@@ -20,7 +20,6 @@
 # CondeNet, Inc. All Rights Reserved.
 ################################################################################
 from r2.lib.utils import tup
-from r2.lib.captcha import get_iden
 from r2.lib.wrapped import Wrapped, StringTemplate
 from r2.lib.filters import websafe_json, spaceCompress
 from r2.lib.jsontemplates import get_api_subtype
@@ -213,9 +212,9 @@ class JQueryResponse(JsonResponse):
     #def _unmark_error(self, e):
     #    self.find("." + e).html("").end()
 
-    def new_captcha(self):
+    def new_captcha(self, puzz_id='', error=0):
         if not self._new_captcha:
-            self.captcha(get_iden())
+            self.captcha(g.solve_pubkey, puzz_id, error)
             self._new_captcha = True
         
     def get_input(self, name):
