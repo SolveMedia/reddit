@@ -122,6 +122,7 @@ function showcover(warning, reason) {
 };
 
 function hidecover(where) {
+    destroyCaptcha();
     $(where).parents(".cover-overlay").hide();
     return false;
 };
@@ -1335,4 +1336,10 @@ function highlight_new_comments(period) {
       items.removeClass("new-comment");
     }
   }
+}
+
+function destroyCaptcha() {
+    var puzzles = jQuery('#login_reg').find('div[id^="sm_widget-"]');
+    var puzzle_id = puzzles[0].id.match(/(?:sm_widget-)(.+)/)[1];
+    ACPuzzle.destroy(puzzle_id);
 }
