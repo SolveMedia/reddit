@@ -46,17 +46,21 @@ ${rounded_captcha()}
   </%utils:round_field>
 </%def>
 
-<%def name="captchagen(iden='', error='', tabulate=False, tabular = True, size=60, label=True, show_error = True)">
+<%def name="captchagen(iden='', error='', tabulate=False, tabular = True, size=60, label=True, show_error = True, label_on_side = False)">
 %if tabulate:
 <table>
 %endif
   %if tabular:
   <tr>
-    <th>
+    %if label_on_side:
+      <th>
+    %endif
     %if label:
       <label for="adcopy_response">${_("are you human?")}</label>
     %endif
-    </th>
+    %if label_on_side:
+      </th>
+    %endif
     <td>
   %endif
     <% id = uuid.uuid4().hex %>
@@ -65,12 +69,10 @@ ${rounded_captcha()}
   </td>
   </tr>
   <tr>
-     <td align="right">
   %else:
      <span class="cap-reply">
   %endif
      %if tabular:
-     </td>
      <td>
      %else:
      </span>
