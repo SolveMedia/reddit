@@ -11,14 +11,15 @@
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
 # the specific language governing rights and limitations under the License.
 #
-# The Original Code is Reddit.
+# The Original Code is reddit.
 #
-# The Original Developer is the Initial Developer.  The Initial Developer of the
-# Original Code is CondeNet, Inc.
+# The Original Developer is the Initial Developer.  The Initial Developer of
+# the Original Code is reddit Inc.
 #
-# All portions of the code written by CondeNet are Copyright (c) 2006-2010
-# CondeNet, Inc. All Rights Reserved.
-################################################################################
+# All portions of the code written by reddit are Copyright (c) 2006-2012 reddit
+# Inc. All Rights Reserved.
+###############################################################################
+
 from validator import *
 from pylons.i18n import _
 from r2.models import *
@@ -27,8 +28,8 @@ from r2.lib.pages import *
 from r2.lib.pages.things import wrap_links
 from r2.lib.strings import strings
 from r2.lib.menus import *
-from r2.controllers import ListingController
-import sha
+from r2.controllers.listingcontroller import ListingController
+from r2.lib.db import queries
 
 from r2.controllers.reddit_base import RedditController
 
@@ -77,7 +78,7 @@ class PromoteController(ListingController):
     @validate(VSponsor('link'),
               link = VLink('link'))
     def GET_edit_promo(self, link):
-        if link.promoted is None:
+        if not link or link.promoted is None:
             return self.abort404()
         rendered = wrap_links(link, wrapper = promote.sponsor_wrapper,
                               skip = False)
@@ -244,7 +245,7 @@ class PromoteController(ListingController):
                                       reference_date = promote.promo_datetime_now,
                                       business_days = False, 
                                       admin_override = True),
-                   sr = VSubmitSR('sr'))
+                   sr = VSubmitSR('sr', promotion=True))
     def POST_add_roadblock(self, form, jquery, dates, sr):
         if (form.has_errors('startdate', errors.BAD_DATE,
                             errors.BAD_FUTURE_DATE) or
@@ -267,7 +268,7 @@ class PromoteController(ListingController):
                                       reference_date = promote.promo_datetime_now,
                                       business_days = False, 
                                       admin_override = True),
-                   sr = VSubmitSR('sr'))
+                   sr = VSubmitSR('sr', promotion=True))
     def POST_rm_roadblock(self, form, jquery, dates, sr):
         if dates and sr:
             sd, ed = dates
@@ -283,7 +284,7 @@ class PromoteController(ListingController):
                                   admin_override = True),
                    l     = VLink('link_id'),
                    bid   = VBid('bid', 'link_id', 'sr'),
-                   sr = VSubmitSR('sr'),
+                   sr = VSubmitSR('sr', promotion=True),
                    indx = VInt("indx"), 
                    targeting = VLength("targeting", 10))
     def POST_edit_campaign(self, form, jquery, l, indx,
@@ -406,15 +407,16 @@ class PromoteController(ListingController):
                    customer_id = VInt("customer_id", min = 0),
                    pay_id = VInt("account", min = 0),
                    edit   = VBoolean("edit"),
-                   address = ValidAddress(["firstName", "lastName",
-                                           "company", "address",
-                                           "city", "state", "zip",
-                                           "country", "phoneNumber"]),
+                   address = ValidAddress(
+                    ["firstName", "lastName", "company", "address",
+                     "city", "state", "zip", "country", "phoneNumber"],
+                    allowed_countries = g.allowed_pay_countries),
                    creditcard = ValidCard(["cardNumber", "expirationDate",
                                            "cardCode"]))
     def POST_update_pay(self, form, jquery, link, indx, customer_id, pay_id,
                         edit, address, creditcard):
         address_modified = not pay_id or edit
+        form_has_errors = False
         if address_modified:
             if (form.has_errors(["firstName", "lastName", "company", "address",
                                  "city", "state", "zip",
@@ -422,14 +424,19 @@ class PromoteController(ListingController):
                                 errors.BAD_ADDRESS) or
                 form.has_errors(["cardNumber", "expirationDate", "cardCode"],
                                 errors.BAD_CARD)):
-                pass
-            else:
+                form_has_errors = True
+            elif g.authorizenetapi:
                 pay_id = edit_profile(c.user, address, creditcard, pay_id)
+            else:
+                pay_id = 1
         # if link is in use or finished, don't make a change
-        if pay_id:
+        if pay_id and not form_has_errors:
             # valid bid and created or existing bid id.
             # check if already a transaction
-            success, reason = promote.auth_campaign(link, indx, c.user, pay_id)
+            if g.authorizenetapi:
+                success, reason = promote.auth_campaign(link, indx, c.user, pay_id)
+            else:
+                success = True
             if success:
                 form.redirect(promote.promo_edit_url(link))
             else:
@@ -445,14 +452,17 @@ class PromoteController(ListingController):
         if c.user_is_loggedin and c.user._id != article.author_id:
             return self.abort404()
 
-        # make sure this is a valid campaign index
-        if indx not in getattr(article, "campaigns", {}):
+        if not promote.is_valid_campaign(article, indx):
             return self.abort404()
 
-        data = get_account_info(c.user)
-        content = PaymentForm(article, indx,
-                              customer_id = data.customerProfileId,
-                              profiles = data.paymentProfiles)
+        if g.authorizenetapi:
+            data = get_account_info(c.user)
+            content = PaymentForm(article, indx,
+                                  customer_id = data.customerProfileId,
+                                  profiles = data.paymentProfiles)
+        else:
+            content = PaymentForm(article, 0, customer_id = 0,
+                                  profiles = [])
         res =  LinkInfoPage(link = article,
                             content = content,
                             show_sidebar = False)
@@ -473,7 +483,7 @@ class PromoteController(ListingController):
             errors = dict(BAD_CSS_NAME = "", IMAGE_ERROR = "")
             try:
                 # thumnails for promoted links can change and therefore expire
-                force_thumbnail(link, file)
+                force_thumbnail(link, file, file_type=".jpg")
             except cssfilter.BadImage:
                 # if the image doesn't clean up nicely, abort
                 errors["IMAGE_ERROR"] = _("bad image")
@@ -481,7 +491,6 @@ class PromoteController(ListingController):
                 return UploadedImage("", "", "upload", errors = errors,
                                      form_id = "image-upload").render()
             else:
-                link.thumbnail_version = sha.new(file).hexdigest()
                 link._commit()
                 return UploadedImage(_('saved'), thumbnail_url(link), "",
                                      errors = errors,

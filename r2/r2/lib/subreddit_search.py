@@ -1,10 +1,37 @@
-from r2.models import *
+# The contents of this file are subject to the Common Public Attribution
+# License Version 1.0. (the "License"); you may not use this file except in
+# compliance with the License. You may obtain a copy of the License at
+# http://code.reddit.com/LICENSE. The License is based on the Mozilla Public
+# License Version 1.1, but Sections 14 and 15 have been added to cover use of
+# software over a computer network and provide for limited attribution for the
+# Original Developer. In addition, Exhibit A has been modified to be consistent
+# with Exhibit B.
+#
+# Software distributed under the License is distributed on an "AS IS" basis,
+# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
+# the specific language governing rights and limitations under the License.
+#
+# The Original Code is reddit.
+#
+# The Original Developer is the Initial Developer.  The Initial Developer of
+# the Original Code is reddit Inc.
+#
+# All portions of the code written by reddit are Copyright (c) 2006-2012 reddit
+# Inc. All Rights Reserved.
+###############################################################################
+
+from r2.models import Subreddit
+from r2.lib.memoize import memoize
+from r2.lib.db.operators import desc
 from r2.lib import utils
+from r2.lib.db import tdb_cassandra
+from r2.lib.cache import CL_ONE
 
-from pylons import g
-
-sr_prefix = 'sr_search_'
-
+class SubredditsByPartialName(tdb_cassandra.View):
+    _use_db = True
+    _value_type = 'pickle'
+    _connection_pool = 'main'
+    _read_consistency_level = CL_ONE
 
 def load_all_reddits():
     query_cache = {}
@@ -21,11 +48,17 @@ def load_all_reddits():
             if len(names) < 10:
                 names.append(sr.name)
 
-    g.permacache.set_multi(query_cache, prefix = sr_prefix)
+    for name_prefix, subreddits in query_cache.iteritems():
+        SubredditsByPartialName._set_values(name_prefix, {'srs': subreddits})
 
 def search_reddits(query):
     query = str(query.lower())
-    return g.permacache.get(sr_prefix + query) or []
+
+    try:
+        result = SubredditsByPartialName._byID(query)
+        return result.srs
+    except tdb_cassandra.NotFound:
+        return []
 
 @memoize('popular_searches', time = 3600)
 def popular_searches():

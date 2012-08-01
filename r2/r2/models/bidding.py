@@ -11,26 +11,27 @@
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
 # the specific language governing rights and limitations under the License.
 #
-# The Original Code is Reddit.
+# The Original Code is reddit.
 #
-# The Original Developer is the Initial Developer.  The Initial Developer of the
-# Original Code is CondeNet, Inc.
+# The Original Developer is the Initial Developer.  The Initial Developer of
+# the Original Code is reddit Inc.
 #
-# All portions of the code written by CondeNet are Copyright (c) 2006-2010
-# CondeNet, Inc. All Rights Reserved.
-################################################################################
+# All portions of the code written by reddit are Copyright (c) 2006-2012 reddit
+# Inc. All Rights Reserved.
+###############################################################################
+
 from sqlalchemy import Column, String, DateTime, Date, Float, Integer, Boolean,\
-     func as safunc, and_, or_
-from sqlalchemy.exceptions import IntegrityError
+     BigInteger, func as safunc, and_, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.schema import PrimaryKeyConstraint
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.orm.exc import NoResultFound
-from sqlalchemy.databases.postgres import PGBigInteger as BigInteger, \
-     PGInet as Inet
+from sqlalchemy.dialects.postgresql.base import PGInet as Inet
 from sqlalchemy.ext.declarative import declarative_base
 from pylons import g
 from r2.lib.utils import Enum
 from r2.models.account import Account
+from r2.models import Link
 from r2.lib.db.thing import Thing, NotFound
 from pylons import request
 from r2.lib.memoize import memoize
@@ -117,7 +118,10 @@ class Sessionized(object):
 
         """
         args = []
-        cols = filter(filter_fn, cls.__table__.c)
+        if filter_fn is None:
+            cols = cls.__table__.c
+        else:
+            cols = filter(filter_fn, cls.__table__.c)
         for k, v in zip(cols, a):
             if not kw.has_key(k.name):
                 args.append((k, cls._make_storable(v)))
@@ -323,6 +327,10 @@ class Bid(Sessionized, Base):
         self.set_status(self.STATUS.CHARGE)
 
     def is_charged(self):
+        '''
+        Returns True if transaction has been charged with authorize.net or is
+        a freebie with "charged" status.
+        '''
         return (self.status == self.STATUS.CHARGE)
 
     def refund(self):
@@ -416,7 +424,6 @@ class PromoteDates(Sessionized, Base):
     @classmethod
     @memoize('promodates.bid_history', time = 10 * 60)
     def bid_history(cls, start_date, end_date = None, account_id = None):
-
         end_date = end_date or datetime.datetime.now(g.tz)
         q = cls.for_date_range(start_date, end_date, account_id = account_id)
 
@@ -529,7 +536,7 @@ class PromotionWeights(Sessionized, Base):
         q = q.filter(and_(cls.date >= start_date, cls.date < end_date))
 
         if author_id is not None:
-            q.filter(author_id = author_id)
+            q = q.filter(cls.account_id == author_id)
 
         res = {}
         for x in q.all():
@@ -540,8 +547,12 @@ class PromotionWeights(Sessionized, Base):
     @classmethod
     @memoize('promodates.bid_history', time = 10 * 60)
     def bid_history(cls, start_date, end_date = None, account_id = None):
-        from r2.models import Link
         from r2.lib import promote
+        from r2.models import PromoCampaign
+        
+        if not end_date:
+            end_date = datetime.datetime.now(g.tz)
+        
         start_date = to_date(start_date)
         end_date   = to_date(end_date)
         q = cls.query()
@@ -558,10 +569,18 @@ class PromotionWeights(Sessionized, Base):
             for i in q:
                 if d == i.date:
                     l = links[i.thing_name]
-                    if not promote.is_rejected(l) and not promote.is_unpaid(l) and not l._deleted:
-                        camp = l.campaigns[i.promo_idx]
-                        bid += i.bid
-                        refund += i.bid if camp[-1] <= 0 else 0
+                    if (not promote.is_rejected(l) and 
+                        not promote.is_unpaid(l) and 
+                        not l._deleted):
+
+                        try:
+                            camp = PromoCampaign._byID(i.promo_idx, data=True)
+                            bid += i.bid
+                            refund += i.bid if camp.is_freebie() else 0
+                        except NotFound:
+                            g.log.error("Skipping missing PromoCampaign in "
+                                        "bidding.bid_history, campaign id: %d" 
+                                        % i.promo_idx)
             res.append([d, bid, refund])
             d += datetime.timedelta(1)
         return res

@@ -4,21 +4,21 @@
 ## http://code.reddit.com/LICENSE. The License is based on the Mozilla Public
 ## License Version 1.1, but Sections 14 and 15 have been added to cover use of
 ## software over a computer network and provide for limited attribution for the
-## Original Developer. In addition, Exhibit A has been modified to be consistent
-## with Exhibit B.
+## Original Developer. In addition, Exhibit A has been modified to be
+## consistent with Exhibit B.
 ##
 ## Software distributed under the License is distributed on an "AS IS" basis,
 ## WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
 ## the specific language governing rights and limitations under the License.
 ##
-## The Original Code is Reddit.
+## The Original Code is reddit.
 ##
 ## The Original Developer is the Initial Developer.  The Initial Developer of
-## the Original Code is CondeNet, Inc.
+## the Original Code is reddit Inc.
 ##
-## All portions of the code written by CondeNet are Copyright (c) 2006-2010
-## CondeNet, Inc. All Rights Reserved.
-################################################################################
+## All portions of the code written by reddit are Copyright (c) 2006-2012
+## reddit Inc. All Rights Reserved.
+###############################################################################
 
 <%! 
    from r2.lib.template_helpers import add_sr
@@ -45,9 +45,9 @@ ${self.RenderPrintable()}
   %endif
 </%def>
 
-<%def name="thing_css_class(what)">
-thing id-${what._fullname}
-</%def>
+<%def name="thing_css_class(what)">thing id-${what._fullname}</%def>
+
+<%def name="thing_data_attributes(what)">data-fullname="${what._fullname}"</%def>
 
 <%def name="RenderPrintable()">
 <% cls = thing.lookups[0].__class__.__name__.lower() %>
@@ -58,6 +58,11 @@ thing id-${what._fullname}
       cls = thing.render_class.__name__.lower()
    else:
       cls = thing.lookups[0].__class__.__name__.lower()
+   
+   if getattr(thing, "is_self", False):
+      selflink = "self"
+   else:
+      selflink = ""
 
    if thing.show_spam:
      rowclass = thing.rowstyle + " spam"
@@ -72,8 +77,9 @@ thing id-${what._fullname}
    if hasattr(thing, "hidden") and thing.hidden:
      rowclass += " hidden"
  %>
-<div class="${self.thing_css_class(thing)} ${rowclass} ${unsafe(cls)}"
-     ${thing.display} onclick="click_thing(this)">
+<div class="${self.thing_css_class(thing)} ${rowclass} ${unsafe(cls)} ${selflink}"
+    ${thing.display} onclick="click_thing(this)"
+    ${unsafe(self.thing_data_attributes(thing))}>
   <p class="parent">
     ${self.ParentDiv()}
   </p>
@@ -110,7 +116,6 @@ thing id-${what._fullname}
 
 <%def name="Child(display=True)">
 <div class="child" ${(not display and "style='display:none'" or "")}>
-
   ${thing.childlisting}
 </div>
 </%def>
@@ -121,8 +126,12 @@ thing id-${what._fullname}
    _class = _type + ("mod" if mod else "")
    fullname = this._fullname
 %>
-  <div class="arrow ${_class}" 
-       onclick="$(this).vote('${thing.votehash}', null, event)"
+  <div class="arrow ${_class} login-required"
+       %if getattr(thing, "votable", True):
+         onclick="$(this).vote('${thing.votehash}', null, event)"
+       %else:
+         onclick="$(this).show_unvotable_message()"
+       %endif
        >
   </div>
 </%def>

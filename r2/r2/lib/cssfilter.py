@@ -11,18 +11,19 @@
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
 # the specific language governing rights and limitations under the License.
 #
-# The Original Code is Reddit.
+# The Original Code is reddit.
 #
-# The Original Developer is the Initial Developer.  The Initial Developer of the
-# Original Code is CondeNet, Inc.
+# The Original Developer is the Initial Developer.  The Initial Developer of
+# the Original Code is reddit Inc.
 #
-# All portions of the code written by CondeNet are Copyright (c) 2006-2010
-# CondeNet, Inc. All Rights Reserved.
-################################################################################
+# All portions of the code written by reddit are Copyright (c) 2006-2012 reddit
+# Inc. All Rights Reserved.
+###############################################################################
+
 from __future__ import with_statement
 
 from r2.models import *
-from r2.lib.utils import sanitize_url, domain, randstr
+from r2.lib.utils import sanitize_url, strip_www, randstr
 from r2.lib.strings import string_dict
 from r2.lib.pages.things import wrap_links
 
@@ -33,10 +34,13 @@ from mako import filters
 import os
 import tempfile
 from r2.lib import s3cp
-from md5 import md5
-from r2.lib.contrib.nymph import optimize_png
+
+from r2.lib.media import upload_media
+
+from r2.lib.template_helpers import s3_https_if_secure
 
 import re
+from urlparse import urlparse
 
 import cssutils
 from cssutils import CSSParser
@@ -47,6 +51,8 @@ from cssutils.css import cssproperties
 from xml.dom import DOMException
 
 msgs = string_dict['css_validator_messages']
+
+browser_prefixes = ['o','moz','webkit','ms','khtml','apple','xv']
 
 custom_macros = {
     'num': r'[-]?\d+|[-]?\d*\.\d+',
@@ -59,10 +65,15 @@ custom_macros = {
     'x11color': r'aliceblue|antiquewhite|aqua|aquamarine|azure|beige|bisque|black|blanchedalmond|blue|blueviolet|brown|burlywood|cadetblue|chartreuse|chocolate|coral|cornflowerblue|cornsilk|crimson|cyan|darkblue|darkcyan|darkgoldenrod|darkgray|darkgreen|darkgrey|darkkhaki|darkmagenta|darkolivegreen|darkorange|darkorchid|darkred|darksalmon|darkseagreen|darkslateblue|darkslategray|darkslategrey|darkturquoise|darkviolet|deeppink|deepskyblue|dimgray|dimgrey|dodgerblue|firebrick|floralwhite|forestgreen|fuchsia|gainsboro|ghostwhite|gold|goldenrod|gray|green|greenyellow|grey|honeydew|hotpink|indianred|indigo|ivory|khaki|lavender|lavenderblush|lawngreen|lemonchiffon|lightblue|lightcoral|lightcyan|lightgoldenrodyellow|lightgray|lightgreen|lightgrey|lightpink|lightsalmon|lightseagreen|lightskyblue|lightslategray|lightslategrey|lightsteelblue|lightyellow|lime|limegreen|linen|magenta|maroon|mediumaquamarine|mediumblue|mediumorchid|mediumpurple|mediumseagreen|mediumslateblue|mediumspringgreen|mediumturquoise|mediumvioletred|midnightblue|mintcream|mistyrose|moccasin|navajowhite|navy|oldlace|olive|olivedrab|orange|orangered|orchid|palegoldenrod|palegreen|paleturquoise|palevioletred|papayawhip|peachpuff|peru|pink|plum|powderblue|purple|red|rosybrown|royalblue|saddlebrown|salmon|sandybrown|seagreen|seashell|sienna|silver|skyblue|slateblue|slategray|slategrey|snow|springgreen|steelblue|tan|teal|thistle|tomato|turquoise|violet|wheat|white|whitesmoke|yellow|yellowgreen',
     'csscolor': r'(maroon|red|orange|yellow|olive|purple|fuchsia|white|lime|green|navy|blue|aqua|teal|black|silver|gray|ActiveBorder|ActiveCaption|AppWorkspace|Background|ButtonFace|ButtonHighlight|ButtonShadow|ButtonText|CaptionText|GrayText|Highlight|HighlightText|InactiveBorder|InactiveCaption|InactiveCaptionText|InfoBackground|InfoText|Menu|MenuText|Scrollbar|ThreeDDarkShadow|ThreeDFace|ThreeDHighlight|ThreeDLightShadow|ThreeDShadow|Window|WindowFrame|WindowText)|#[0-9a-f]{3}|#[0-9a-f]{6}|rgb\({w}{int}{w},{w}{int}{w},{w}{int}{w}\)|rgb\({w}{num}%{w},{w}{num}%{w},{w}{num}%{w}\)',
     'color': '{x11color}|{csscolor}',
+
+    'bg-gradient': r'none|{color}|[a-z-]*-gradient\([^;]*\)',
+    'bg-gradients': r'{bg-gradient}(?:,\s*{bg-gradient})*',
+
+    'border-radius': r'(({length}|{percentage}){w}){1,2}',
     
     'single-text-shadow': r'({color}\s+)?{length}\s+{length}(\s+{length})?|{length}\s+{length}(\s+{length})?(\s+{color})?',
 
-    'box-shadow-pos': r'{length}\s+{length}(\s+{length})?',
+    'box-shadow-pos': r'{length}\s+{length}(\s+{length})?(\s+{length})?',
 }
 
 custom_values = {
@@ -70,25 +81,27 @@ custom_values = {
     '_width': r'{length}|{percentage}|auto|inherit',
     '_overflow': r'visible|hidden|scroll|auto|inherit',
     'color': r'{color}',
-    'background-color': r'{color}',
     'border-color': r'{color}',
-    'background-position': r'(({percentage}|{length}){0,3})?\s*(top|center|left)?\s*(left|center|right)?',
-    'opacity': r'{num}',
+    'opacity': r'^0?\.?[0-9]*|1\.0*|1|0',
     'filter': r'alpha\(opacity={num}\)',
-}
-
-nonstandard_values = {
+    
+    'background': r'{bg-gradients}',
+    'background-image': r'{bg-gradients}',
+    'background-color': r'{color}',
+    'background-position': r'(({percentage}|{length}){0,3})?\s*(top|center|left)?\s*(left|center|right)?',
+    
     # http://www.w3.org/TR/css3-background/#border-top-right-radius
-    '-moz-border-radius': r'(({length}|{percentage}){w}){1,2}',
-    '-moz-border-radius-topleft': r'(({length}|{percentage}){w}){1,2}',
-    '-moz-border-radius-topright': r'(({length}|{percentage}){w}){1,2}',
-    '-moz-border-radius-bottomleft': r'(({length}|{percentage}){w}){1,2}',
-    '-moz-border-radius-bottomright': r'(({length}|{percentage}){w}){1,2}',
-    '-webkit-border-radius': r'(({length}|{percentage}){w}){1,2}',
-    '-webkit-border-top-left-radius': r'(({length}|{percentage}){w}){1,2}',
-    '-webkit-border-top-right-radius': r'(({length}|{percentage}){w}){1,2}',
-    '-webkit-border-bottom-left-radius': r'(({length}|{percentage}){w}){1,2}',
-    '-webkit-border-bottom-right-radius': r'(({length}|{percentage}){w}){1,2}',
+    'border-radius': r'{border-radius}',
+    'border-top-right-radius': r'{border-radius}',
+    'border-bottom-right-radius': r'{border-radius}',
+    'border-bottom-left-radius': r'{border-radius}',
+    'border-top-left-radius': r'{border-radius}',
+
+    # old mozilla style (for compatibility with existing stylesheets)
+    'border-radius-topright': r'{border-radius}',
+    'border-radius-bottomright': r'{border-radius}',
+    'border-radius-bottomleft': r'{border-radius}',
+    'border-radius-topleft': r'{border-radius}',
     
     # http://www.w3.org/TR/css3-text/#text-shadow
     'text-shadow': r'none|({single-text-shadow}{w},{w})*{single-text-shadow}',
@@ -97,7 +110,11 @@ nonstandard_values = {
     # (This description doesn't support multiple shadows)
     'box-shadow': 'none|(?:({box-shadow-pos}\s+)?{color}|({color}\s+?){box-shadow-pos})',
 }
-custom_values.update(nonstandard_values);
+
+def _build_regex_prefix(prefixes):
+    return re.compile("|".join("^-"+p+"-" for p in prefixes))
+
+prefix_regex = _build_regex_prefix(browser_prefixes)
 
 def _expand_macros(tokdict,macrodict):
     """ Expand macros in token dictionary """
@@ -112,7 +129,7 @@ def _expand_macros(tokdict,macrodict):
 def _compile_regexes(tokdict):
     """ Compile all regular expressions into callable objects """
     for key, value in tokdict.items():
-        tokdict[key] = re.compile('^(?:%s)$' % value, re.I).match
+        tokdict[key] = re.compile('\A(?:%s)\Z' % value, re.I).match
     return tokdict
 _compile_regexes(_expand_macros(custom_values,custom_macros))
 
@@ -161,9 +178,10 @@ class ValidationError(Exception):
         return "ValidationError%s: %s (%s)" % (line, self.message, obj)
 
 # local urls should be in the static directory
-local_urls = re.compile(r'^/static/[a-z./-]+$')
+local_urls = re.compile(r'\A/static/[a-z./-]+\Z')
 # substitutable urls will be css-valid labels surrounded by "%%"
 custom_img_urls = re.compile(r'%%([a-zA-Z0-9\-]+)%%')
+valid_url_schemes = ('http', 'https')
 def valid_url(prop,value,report):
     """
     checks url(...) arguments in CSS, ensuring that the contents are
@@ -192,39 +210,56 @@ def valid_url(prop,value,report):
         name = custom_img_urls.match(url).group(1)
         # the label -> image number lookup is stored on the subreddit
         if c.site.images.has_key(name):
-            num = c.site.images[name]
-            value._setCssText("url(http://%s/%s_%d.png?v=%s)"
-                              % (g.s3_thumb_bucket, c.site._fullname, num,
-                                 randstr(36)))
+            url = c.site.images[name]
+            if isinstance(url, int): # legacy url, needs to be generated
+                bucket = g.s3_old_thumb_bucket
+                baseurl = "http://%s" % (bucket)
+                if g.s3_media_direct:
+                    baseurl = "http://%s/%s" % (s3_direct_url, bucket)
+                url = "%s/%s_%d.png"\
+                                  % (baseurl, c.site._fullname, url)
+            url = s3_https_if_secure(url)
+            value._setCssText("url(%s)"%url)
         else:
             # unknown image label -> error
             report.append(ValidationError(msgs['broken_url']
                                           % dict(brokenurl = value.cssText),
                                           value))
-    # allowed domains are ok
-    elif domain(url) in g.allowed_css_linked_domains:
-        pass
     else:
-        report.append(ValidationError(msgs['broken_url']
-                                      % dict(brokenurl = value.cssText),
-                                      value))
+        try:
+            u = urlparse(url)
+            valid_scheme = u.scheme and u.scheme in valid_url_schemes
+            valid_domain = strip_www(u.netloc) in g.allowed_css_linked_domains
+        except ValueError:
+            u = False
+
+        # allowed domains are ok
+        if not (u and valid_scheme and valid_domain):
+            report.append(ValidationError(msgs['broken_url']
+                                          % dict(brokenurl = value.cssText),
+                                          value))
     #elif sanitize_url(url) != url:
     #    report.append(ValidationError(msgs['broken_url']
     #                                  % dict(brokenurl = value.cssText),
     #                                  value))
 
 
+def strip_browser_prefix(prop):
+    t = prefix_regex.split(prop, maxsplit=1)
+    return t[len(t) - 1]
+
 def valid_value(prop,value,report):
+    prop_name = strip_browser_prefix(prop.name) # Remove browser-specific prefixes eg: -moz-border-radius becomes border-radius
     if not (value.valid and value.wellformed):
         if (value.wellformed
-            and prop.name in cssproperties.cssvalues
-            and cssproperties.cssvalues[prop.name](prop.value)):
+            and prop_name in cssproperties.cssvalues
+            and cssproperties.cssvalues[prop_name](prop.value)):
             # it's actually valid. cssutils bug.
             pass
         elif (not value.valid
               and value.wellformed
-              and prop.name in custom_values
-              and custom_values[prop.name](prop.value)):
+              and prop_name in custom_values
+              and custom_values[prop_name](prop.value)):
             # we're allowing it via our own custom validator
             value.valid = True
 
@@ -237,7 +272,7 @@ def valid_value(prop,value,report):
                         prop.cssValue.valid = False
                         prop.valid = False
                         break
-        elif not (prop.name in cssproperties.cssvalues or prop.name in custom_values):
+        elif not (prop_name in cssproperties.cssvalues or prop_name in custom_values):
             error = (msgs['invalid_property']
                      % dict(cssprop = prop.name))
             report.append(ValidationError(error,value))
@@ -250,8 +285,8 @@ def valid_value(prop,value,report):
     if value.primitiveType == CSSPrimitiveValue.CSS_URI:
         valid_url(prop,value,report)
 
-error_message_extract_re = re.compile('.*\\[([0-9]+):[0-9]*:.*\\]$')
-only_whitespace          = re.compile('^\s*$')
+error_message_extract_re = re.compile('.*\\[([0-9]+):[0-9]*:.*\\]\Z')
+only_whitespace          = re.compile('\A\s*\Z')
 def validate_css(string):
     p = CSSParser(raiseExceptions = True)
 
@@ -329,13 +364,23 @@ def validate_css(string):
     return parsed,report
 
 def find_preview_comments(sr):
-    comments = Comment._query(Comment.c.sr_id == c.site._id,
-                              limit=25, data=True)
-    comments = list(comments)
-    if not comments:
-        comments = Comment._query(limit=25, data=True)
-        comments = list(comments)
+    if g.use_query_cache:
+        from r2.lib.db.queries import get_sr_comments, get_all_comments
 
+        comments = get_sr_comments(c.site)
+        comments = list(comments)
+        if not comments:
+            comments = get_all_comments()
+            comments = list(comments)
+
+        return Thing._by_fullname(comments[:25], data=True, return_dict=False)
+    else:
+        comments = Comment._query(Comment.c.sr_id == c.site._id,
+                                  limit=25, data=True)
+        comments = list(comments)
+        if not comments:
+            comments = Comment._query(limit=25, data=True)
+            comments = list(comments)
     return comments
 
 def find_preview_links(sr):
@@ -344,9 +389,7 @@ def find_preview_links(sr):
     # try to find a link to use, otherwise give up and return
     links = get_hot([c.site])
     if not links:
-        sr = Subreddit._by_name(g.default_sr)
-        if sr:
-            links = get_hot([sr])
+        links = get_hot(Subreddit.default_subreddits(ids=False))
 
     if links:
         links = links[:25]
@@ -364,60 +407,13 @@ def rendered_link(links, media, compress):
 def rendered_comment(comments):
     return wrap_links(comments, num = 1).render(style = "html")
 
-class BadImage(Exception): pass
+class BadImage(Exception):
+    def __init__(self, error = None):
+        self.error = error
 
-def clean_image(data,format):
-    import Image
-    from StringIO import StringIO
-
+def save_sr_image(sr, data, suffix = '.png'):
     try:
-        in_file = StringIO(data)
-        out_file = StringIO()
-
-        im = Image.open(in_file)
-        im = im.resize(im.size)
-
-        im.save(out_file,format)
-        ret = out_file.getvalue()
-    except IOError,e:
+        return upload_media(data, file_type = suffix)
+    except Exception as e:
         raise BadImage(e)
-    finally:
-        out_file.close()
-        in_file.close()
-
-    return ret
-    
-def save_sr_image(sr, data, resource = None):
-    """
-    uploades image data to s3 as a PNG and returns its new url.  Urls
-    will be of the form:
-      http://${g.s3_thumb_bucket}/${sr._fullname}[_${num}].png?v=${md5hash}
-    [Note: g.s3_thumb_bucket begins with a "/" so the above url is valid.]
-    """
-    hash = md5(data).hexdigest()
-
-    f = tempfile.NamedTemporaryFile(suffix = '.png',delete=False)
-    try:
-        f.write(data)
-        f.close()
-
-        optimize_png(f.name, g.png_optimizer)
-        contents = open(f.name).read()
-
-        if resource is not None:
-            resource = "_%s" % resource
-        else:
-            resource = ""
-        fname = resource = sr._fullname + resource + ".png"
-
-        s3cp.send_file(g.s3_thumb_bucket, fname, contents, 'image/png')
-
-    finally:
-        os.unlink(f.name)
-
-    return 'http://%s/%s?v=%s' % (g.s3_thumb_bucket, 
-                                  resource.split('/')[-1], hash)
-
- 
-
 

@@ -145,8 +145,9 @@ function handleResponse(action) {
                         else {
                             $.debug("unrecognized");
                         }
-                    }
-                    else {
+                    } else if (op == "refresh") {
+                        $.refresh();
+                    } else {
                         $.debug("unrecognized");
                     }
                 });
@@ -167,7 +168,7 @@ $.request = function(op, parameters, worker_in, block, type,
     var action = op;
     var worker = worker_in;
 
-    if (rate_limit(op))
+    if (rate_limit(op) || (window != window.top && !reddit.cnameframe && !reddit.external_frame))
         return;
 
     /* we have a lock if we are not blocking or if we have gotten a lock */
@@ -258,10 +259,7 @@ rate_limit = function() {
 
 $.fn.vote = function(vh, callback, event, ui_only) {
     /* for vote to work, $(this) should be the clicked arrow */
-    if (!reddit.logged) {
-        showcover(true, 'vote_' + $(this).thing_id());
-    }
-    else if($(this).hasClass("arrow")) {
+    if (reddit.logged && $(this).hasClass("arrow")) {
         var dir = ( $(this).hasClass(up_cls) ? 1 :
                     ( $(this).hasClass(down_cls) ? -1 : 0) );
         var things = $(this).all_things_by_id();
@@ -302,11 +300,11 @@ $.fn.vote = function(vh, callback, event, ui_only) {
         if(callback) 
             callback(things, dir);
     }
-    if(event) {
-        event.stopPropagation();
-    }
 };
 
+$.fn.show_unvotable_message = function() {
+  $(this).thing().find(".entry:first .unvotable-message").css("display", "inline-block");
+};
 
 $.fn.thing = function() {
     /* Returns the first thing that is a parent of the current element */
@@ -328,7 +326,7 @@ $.fn.thing_id = function(class_filter) {
         t = t.find("." + class_filter + ":first");
     }
     if(t.length) {
-        var id = $.grep(t.get(0).className.split(' '),
+        var id = $.grep(t.get(0).className.match(/\S+/g),
                         function(i) { return i.match(/^id-/); }); 
         return (id.length) ? id[0].slice(3, id[0].length) : "";
     }
@@ -426,7 +424,7 @@ $.fn.new_thing_child = function(what, use_listing) {
         new_form = what.hide()
             .prependTo(where)
             .show()
-            .find('input[name=parent]').attr('value', id).end();
+            .find('input[name="parent"]').val(id).end();
     
     return (new_form).randomize_ids();
 };
@@ -450,8 +448,6 @@ $.fn.replace_things = function(things, keep_children, reveal, stubs) {
      * case of a comment tree, flags whether or not the new thing has
      * the thread present) while "reveal" determines whether or not to
      * animate the transition from old to new. */
-    var midcol = $(".midcol:visible:first").css("width");
-    var numcol = $(".rank:visible:first").css("width");
     var self = this;
     return $.map(things, function(thing) {
             var data = thing.data;
@@ -467,10 +463,6 @@ $.fn.replace_things = function(things, keep_children, reveal, stubs) {
             }
             existing.after($.unsafe(data.content));
             var new_thing = existing.next();
-            if($.defined(midcol)) {
-                new_thing.find(".midcol").css("width", midcol).end()
-                    .find(".rank").css("width", midcol);
-            }
             if(keep_children) {
                 /* show the new thing */
                 new_thing.show()
@@ -517,15 +509,11 @@ $.insert_things = function(things, append) {
     /* Insert new things into a listing.*/
     return $.map(things, function(thing) {
             var data = thing.data;
-            var midcol = $(".midcol:visible:first").css("width");
-            var numcol = $(".rank:visible:first").css("width");
             var s = $.listing(data.parent);
             if(append)
                 s = s.append($.unsafe(data.content)).children(".thing:last");
             else
                 s = s.prepend($.unsafe(data.content)).children(".thing:first");
-            s.find(".midcol").css("width", midcol);
-            s.find(".rank").css("width", numcol);
             thing_init_func(s.hide().show());
             return s;
         });
@@ -573,12 +561,6 @@ $.fn.insert_table_rows = function(rows, index) {
                   });
           });
     return this;
-};
-
-$.set_tracker = function(id, show_track, click_track) {
-    /* hook for api to pass back tracker information */
-    reddit.trackers[id] = {show: show_track, click: click_track};
-    $.things(id).filter(":visible").show();
 };
 
 
@@ -652,7 +634,7 @@ $.fn.select_line = function(lineNo) {
                 caret_pos = 1;
             }
             
-            var lines = $(this).attr("value").split(newline);
+            var lines = $(this).val().split(newline);
             
             for(var x=0; x<lineNo-1; x++) 
                 caret_pos += lines[x].length + newline_length;
@@ -697,7 +679,7 @@ $.apply_stylesheet = function(cssText) {
         /* for everyone else, we walk <head> for the <link> or <style>
          * that has the old stylesheet, and delete it. Then we add a
          * <style> with the new one */
-        $("head").children("*[title=" + sheet_title + "]").remove();
+        $("head").children('*[title="' + sheet_title + '"]').remove();
         $("head").append("<style type='text/css' media='screen' title='" + 
                          sheet_title + "'>" + cssText + "</style>");
   }
@@ -713,85 +695,50 @@ $.rehighlight_new_comments = function() {
 }
 
 /* namespace globals for cookies -- default prefix and domain */
-var default_cookie_domain;
+var default_cookie_domain
 $.default_cookie_domain = function(domain) {
-    if($.defined(domain))
-        default_cookie_domain = domain;
-    return default_cookie_domain;
-};
+    if (domain) {
+        default_cookie_domain = domain
+    }
+}
 
-var cookie_name_prefix = "_";
+var cookie_name_prefix = "_"
 $.cookie_name_prefix = function(name) {
-    if($.defined(name))
-        cookie_name_prefix = name + "_";
-    return cookie_name_prefix;
-};
-
-
-/* cookie functions */
-$.cookie_test = function() {
-    /* tries to write a cookie and sees if it is allowed by making
-     * sure it can read back what it wrote */
-    var m = (Math.random() + "").split('.')[1];
-    var name = "test";
-    $.cookie_write({name: name, data: m})
-    if ($.cookie_read(name).data == m) {
-        $.cookie_erase(name);
-        return true;
+    if (name) {
+        cookie_name_prefix = name + "_"
     }
-};
+}
 
-$.cookie_erase = function(data) {
-    data.data = "";
-    data.expires = -1;
-    $.cookie_write(data);
-};
-
+/* old reddit-specific cookie functions */
 $.cookie_write = function(c) {
-    if(c.name) {
-        var data = $.with_default(c.data, "");
-        data = (typeof(data) == 'string') ? data : $.toJSON(data);
-        data = cookie_name_prefix + c.name+'='+ escape(data);
-        if($.defined(c.expires)) {
-            var expires = c.expires;
-            /* interpret numbers as number of days */
-            if(typeof(expires) == "number") {
-                var date = new Date();
-                date.setTime(date.getTime()+(expires*24*60*60*1000));
-                expires = date;
-            }
-            /* Dates will have a conversion function */
-            if($.defined(expires.toGMTString)) 
-                expires = expires.toGMTString();
-            data += '; expires=' + expires;
-        }
-        var domain = $.with_default(c.domain, default_cookie_domain);
-        if($.defined(domain))
-            data += '; domain=' + domain;
-        data += '; path=' + $.with_default(c.path, '/');
-        document.cookie=data;
-    }
-};
+    if (c.name) {
+        var options = {}
+        options.expires = c.expires
+        options.domain = c.domain || default_cookie_domain
+        options.path = c.path || '/'
 
-$.cookie_read = function(name) {
-    var nameEQ = cookie_name_prefix + name + '=';
-    var ca=document.cookie.split(';');
-    /* walk the list backwards so we always get the last cookie in the
-       list */
-    var data = '';
-    for(var i = ca.length-1; i >= 0; i--) { 
-        var c = ca[i]; 
-        while(c.charAt(0)==' ') c=c.substring(1,c.length);
-        if(c.indexOf(nameEQ)==0) {
-          /* we can unescape even if it's not escaped */
-          data = unescape(c.substring(nameEQ.length,c.length));
-          try {
-              data = $.secureEvalJSON(data);
-          } catch(e) {};
-          break;
+        var key = cookie_name_prefix + c.name,
+            value = c.data
+
+        if (value === null || value == '') {
+            value = null
+        } else if (typeof(value) != 'string') {
+            value = JSON.stringify(value)
         }
+
+        $.cookie(key, value, options)
     }
-    return {name: name, data: data};
-};
+}
+
+$.cookie_read = function(name, prefix) {
+    var prefixedName = (prefix || cookie_name_prefix) + name,
+        data = $.cookie(prefixedName)
+
+    try {
+        data = JSON.parse(data)
+    } catch(e) {}
+
+    return {name: name, data: data}
+}
 
 })(jQuery);

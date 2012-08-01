@@ -11,14 +11,15 @@
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
 # the specific language governing rights and limitations under the License.
 #
-# The Original Code is Reddit.
+# The Original Code is reddit.
 #
-# The Original Developer is the Initial Developer.  The Initial Developer of the
-# Original Code is CondeNet, Inc.
+# The Original Developer is the Initial Developer.  The Initial Developer of
+# the Original Code is reddit Inc.
 #
-# All portions of the code written by CondeNet are Copyright (c) 2006-2010
-# CondeNet, Inc. All Rights Reserved.
-################################################################################
+# All portions of the code written by reddit are Copyright (c) 2006-2012 reddit
+# Inc. All Rights Reserved.
+###############################################################################
+
 from reddit_base import RedditController, MinimalController, make_key
 from r2.lib.pages import Button, ButtonNoBody, ButtonEmbed, ButtonLite, \
     ButtonDemoPanel, WidgetDemoPanel, Bookmarklets, BoringPage, UpgradeButtons
@@ -36,10 +37,9 @@ class ButtonjsController(MinimalController):
         MinimalController.pre(self)
         # override user loggedin behavior to ensure this page always
         # uses the page cache
-        (user, maybe_admin) = \
-            valid_cookie(c.cookies[g.login_cookie].value
-                         if g.login_cookie in c.cookies
-                         else '')
+        user = valid_cookie(c.cookies[g.login_cookie].value
+                            if g.login_cookie in c.cookies
+                            else '')
         if user:
             self.user_is_loggedin = True
 

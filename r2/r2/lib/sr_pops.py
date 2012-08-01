@@ -11,27 +11,23 @@
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
 # the specific language governing rights and limitations under the License.
 #
-# The Original Code is Reddit.
+# The Original Code is reddit.
 #
-# The Original Developer is the Initial Developer.  The Initial Developer of the
-# Original Code is CondeNet, Inc.
+# The Original Developer is the Initial Developer.  The Initial Developer of
+# the Original Code is reddit Inc.
 #
-# All portions of the code written by CondeNet are Copyright (c) 2006-2010
-# CondeNet, Inc. All Rights Reserved.
-################################################################################
-from pylons import g
-from r2.models import Subreddit
+# All portions of the code written by reddit are Copyright (c) 2006-2012 reddit
+# Inc. All Rights Reserved.
+###############################################################################
+
+from r2.models import Subreddit, SubredditPopularityByLanguage
 from r2.lib.db.operators import desc
 from r2.lib import count
+from r2.lib.utils import fetch_things2, flatten
 from r2.lib.memoize import memoize
-from r2.lib.utils import fetch_things2, flatten, keymap
 
 # the length of the stored per-language list
 limit = 1000
-
-def cached_srs_key(lang, over18_state):
-    assert over18_state in ('no_over18', 'allow_over18', 'only_over18')
-    return str('sr_pop_%s_%s' % (lang, over18_state))
 
 def set_downs():
     sr_counts = count.get_sr_counts()
@@ -42,7 +38,6 @@ def set_downs():
         if c != sr._downs and c > 0:
             sr._downs = max(c, 0)
             sr._commit()
-    count.clear_sr_counts(names)
 
 def cache_lists():
     def _chop(srs):
@@ -61,7 +56,8 @@ def cache_lists():
             # skip special system reddits like promos
             continue
 
-        if sr.type not in ('public', 'restricted'):
+        type = getattr(sr, 'type', 'private')
+        if type not in ('public', 'restricted'):
             # skips reddits that can't appear in the default list
             # because of permissions
             continue
@@ -88,12 +84,14 @@ def cache_lists():
         print "For %s/%s setting %s" % (lang, over18,
                                         map(lambda sr: sr.name, srs[:50]))
 
-        g.permacache.set(cached_srs_key(lang, over18), sr_tuples)
+        SubredditPopularityByLanguage._set_values(lang, {over18: sr_tuples})
 
 def run():
     set_downs()
     cache_lists()
 
+# this relies on c.content_langs being sorted to increase cache hit rate
+@memoize('sr_pops.pop_reddits', time=3600, stale=True)
 def pop_reddits(langs, over18, over18_only, filter_allow_top = False):
     if not over18:
         over18_state = 'no_over18'
@@ -102,19 +100,28 @@ def pop_reddits(langs, over18, over18_only, filter_allow_top = False):
     else:
         over18_state = 'allow_over18'
 
-    keys = map(lambda lang: cached_srs_key(lang, over18_state), langs)
+    # we only care about base languages, not subtags here. so en-US -> en
+    unique_langs = []
+    seen_langs = set()
+    for lang in langs:
+        if '-' in lang:
+            lang = lang.split('-', 1)[0]
+        if lang not in seen_langs:
+            unique_langs.append(lang)
+            seen_langs.add(lang)
 
     # dict(lang_key -> [(_downs, allow_top, sr_id)])
-    srs = g.permacache.get_multi(keys)
-
-    tups = flatten(srs.values())
+    bylang = SubredditPopularityByLanguage._byID(unique_langs,
+                                                 properties=[over18_state])
+    tups = flatten([lang_lists[over18_state] for lang_lists
+                                             in bylang.values()])
 
     if filter_allow_top:
         # remove the folks that have opted out of being on the front
         # page as appropriate
         tups = filter(lambda tpl: tpl[1], tups)
 
-    if len(srs) > 1:
+    if len(tups) > 1:
         # if there was only one returned, it's already sorted
         tups.sort(key = lambda tpl: tpl[0], reverse=True)
 

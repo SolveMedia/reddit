@@ -11,14 +11,14 @@
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
 # the specific language governing rights and limitations under the License.
 #
-# The Original Code is Reddit.
+# The Original Code is reddit.
 #
-# The Original Developer is the Initial Developer.  The Initial Developer of the
-# Original Code is CondeNet, Inc.
+# The Original Developer is the Initial Developer.  The Initial Developer of
+# the Original Code is reddit Inc.
 #
-# All portions of the code written by CondeNet are Copyright (c) 2006-2010
-# CondeNet, Inc. All Rights Reserved.
-################################################################################
+# All portions of the code written by reddit are Copyright (c) 2006-2012 reddit
+# Inc. All Rights Reserved.
+###############################################################################
 
 from Queue import Queue
 from threading import local, Thread
@@ -42,6 +42,7 @@ amqp_exchange = 'reddit_exchange'
 log = g.log
 amqp_virtual_host = g.amqp_virtual_host
 amqp_logging = g.amqp_logging
+stats = g.stats
 
 #there are two ways of interacting with this module: add_item and
 #handle_items/consume_items. _add_item (the internal function for
@@ -154,16 +155,20 @@ def _add_item(routing_key, body, message_id = None,
     if message_id:
         msg.properties['message_id'] = message_id
 
+    event_name = 'amqp.%s' % routing_key
     try:
         chan.basic_publish(msg,
                            exchange = amqp_exchange,
                            routing_key = routing_key)
     except Exception as e:
+        stats.event_count(event_name, 'enqueue_failed')
         if e.errno == errno.EPIPE:
             connection_manager.get_channel(True)
             add_item(routing_key, body, message_id)
         else:
             raise
+    else:
+        stats.event_count(event_name, 'enqueue')
 
 def add_item(routing_key, body, message_id = None, delivery_mode = DELIVERY_DURABLE):
     if amqp_host and amqp_logging:
@@ -181,6 +186,8 @@ def consume_items(queue, callback, verbose=True):
        single items at a time. This is more efficient than
        handle_items when the queue is likely to be occasionally empty
        or if batching the received messages is not necessary."""
+    from pylons import c
+
     chan = connection_manager.get_channel()
 
     def _callback(msg):
@@ -194,6 +201,8 @@ def consume_items(queue, callback, verbose=True):
             print "%s: 1 item %s" % (queue, count_str)
 
         g.reset_caches()
+        c.use_write_db = {}
+
         ret = callback(msg)
         msg.channel.basic_ack(msg.delivery_tag)
         sys.stdout.flush()
@@ -212,17 +221,19 @@ def consume_items(queue, callback, verbose=True):
         if chan.is_open:
             chan.close()
 
-def handle_items(queue, callback, ack = True, limit = 1, drain = False,
-                 verbose=True, sleep_time = 1):
+def handle_items(queue, callback, ack=True, limit=1, min_size=0,
+                 drain=False, verbose=True, sleep_time=1):
     """Call callback() on every item in a particular queue. If the
-       connection to the queue is lost, it will die. Intended to be
-       used as a long-running process."""
+    connection to the queue is lost, it will die. Intended to be
+    used as a long-running process."""
+    if limit < min_size:
+        raise ValueError("min_size must be less than limit")
+    from pylons import c
 
     chan = connection_manager.get_channel()
     countdown = None
 
     while True:
-
         # NB: None != 0, so we don't need an "is not None" check here
         if countdown == 0:
             break
@@ -238,16 +249,23 @@ def handle_items(queue, callback, ack = True, limit = 1, drain = False,
             countdown = 1 + msg.delivery_info['message_count']
 
         g.reset_caches()
+        c.use_write_db = {}
 
-        items = []
+        items = [msg]
 
-        while msg and countdown != 0:
-            items.append(msg)
+        while countdown != 0:
             if countdown is not None:
                 countdown -= 1
             if len(items) >= limit:
                 break # the innermost loop only
             msg = chan.basic_get(queue)
+            if msg is None:
+                if len(items) < min_size:
+                    time.sleep(sleep_time)
+                else:
+                    break
+            else:
+                items.append(msg)
 
         try:
             count_str = ''

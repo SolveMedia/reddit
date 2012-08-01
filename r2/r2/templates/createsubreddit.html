@@ -4,21 +4,21 @@
 ## http://code.reddit.com/LICENSE. The License is based on the Mozilla Public
 ## License Version 1.1, but Sections 14 and 15 have been added to cover use of
 ## software over a computer network and provide for limited attribution for the
-## Original Developer. In addition, Exhibit A has been modified to be consistent
-## with Exhibit B.
+## Original Developer. In addition, Exhibit A has been modified to be
+## consistent with Exhibit B.
 ##
 ## Software distributed under the License is distributed on an "AS IS" basis,
 ## WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
 ## the specific language governing rights and limitations under the License.
 ##
-## The Original Code is Reddit.
+## The Original Code is reddit.
 ##
 ## The Original Developer is the Initial Developer.  The Initial Developer of
-## the Original Code is CondeNet, Inc.
+## the Original Code is reddit Inc.
 ##
-## All portions of the code written by CondeNet are Copyright (c) 2006-2010
-## CondeNet, Inc. All Rights Reserved.
-################################################################################
+## All portions of the code written by reddit are Copyright (c) 2006-2012
+## reddit Inc. All Rights Reserved.
+###############################################################################
 
 <%!
    from r2.lib.filters import keep_space
@@ -29,51 +29,12 @@
 <%namespace file="printablebuttons.html" import="toggle_button, simple_button" />
 
 <%namespace name="utils" file="utils.html"/>
-
-<script type="text/javascript">
-function update_title(elem) {
-  var form = $(elem).parents("form");
-  var title = $(form).find("input[name=title]");
-  var name  = $(form).find("input[name=name]");
-  if (title.attr("value") == "")
-    title.attr("value", name.attr("value"));
-}
-</script>
-
-<%def name="radio_type(field_name, val_name, title, text, checked)">
-  <% full_name = field_name + "_" + val_name %>
-  <tr>
-    <td class="nowrap nopadding">
-      <input name="${field_name}" type="radio" id="${full_name}"
-             value="${val_name}" class="nomargin"
-             %if checked:
-               checked="checked"
-             %endif
-             />
-      <label for="${full_name}">${title}</label>
-    </td>
-    <td class="leftpad"><span class="gray">${text}</span></td>
-  </tr>
-</%def>
  
-<div class="create-reddit thing"
+<div class="create-reddit fancy-settings thing"
      %if thing.site:
        id="${thing.site._fullname}"
      %endif
      >
-%if thing.site:
-  <h1>${_("community settings")}
-  %if thing.site:
-    | &#32;<b>${thing.site.name}</b>
-  %endif
-  </h1>
-%else:
-  %if thing.name:
-    <p class="infobar">
-      ${_("that subreddit doesn't exist, but you can create it here.")}</p>
-  %endif
-  <h1>${_("create a community")}</h1>
-%endif
 
 <div class="pretty-form" id="sr-form">
 
@@ -105,7 +66,16 @@ function update_title(elem) {
   </%utils:line_field>
 
   <%utils:line_field title="${_('description')}" css_class="usertext"
-                     description="${_('500 characters max.  Make them count.')}">
+                     description="${_('publicly describe your subreddit for all to see. 500 characters max.')}">
+    %if thing.site and thing.site.public_description:
+     ${UserText(None, text=thing.site.public_description or "", editable=True, creating=True, name="public_description", have_form=False)}
+    %else:
+     ${UserText(None, text="", creating=True, name="public_description", have_form=False)}
+    %endif
+  </%utils:line_field>
+
+  <%utils:line_field title="${_('sidebar')}" css_class="usertext"
+                     description="${_('shown in the sidebar of your subreddit. 5120 characters max.')}">
     %if thing.site and thing.site.description:
      ${UserText(None, text = thing.site.description or "", editable = True, creating = True, name="description", have_form = False)}
     %else:
@@ -126,32 +96,39 @@ function update_title(elem) {
 
   <%utils:line_field title="${_('type')}">
     <div class="delete-field">
-      <table >
-      ${radio_type('type', "public", _("public"),
-                   _("anyone can view and submit"),
-                   (not thing.site or thing.site.type=='public'))}
-      ${radio_type('type', "restricted", _("restricted"),
-                   _("anyone can view, but only some are approved to submit links"),
-                   (thing.site and thing.site.type=='restricted'))}
-      ${radio_type('type', "private", _("private"),
-                   _("only approved members can view and submit"),
-                   (thing.site and thing.site.type=='private'))}
+      <table>
+      ${utils.radio_type('type', "public", _("public"),
+                         _("anyone can view and submit"),
+                         (not thing.site or thing.site.type=='public'))}
+      ${utils.radio_type('type', "restricted", _("restricted"),
+                         _("anyone can view, but only some are approved to submit links"),
+                         (thing.site and thing.site.type=='restricted'))}
+      ${utils.radio_type('type', "private", _("private"),
+                         _("only approved members can view and submit"),
+                         (thing.site and thing.site.type=='private'))}
+
+      <% is_archived = thing.site and thing.site.type == 'archived' %>
+      %if c.user_is_admin or is_archived:
+        ${utils.radio_type('type', "archived", _("archived"),
+                           _("anyone can view, but submissions are no longer accepted"),
+                           is_archived)}
+      %endif
       </table>
     </div>
   </%utils:line_field>
 
   <%utils:line_field title="${_('content options')}">
     <div class="delete-field">
-      <table >
-        ${radio_type('link_type', "any", _("any"),
-                     _("any link type is allowed"),
-                     (not thing.site or thing.site.link_type=='any'))}
-        ${radio_type('link_type', "link", _("links only"),
-                     _("only links to external sites are allowed"),
-                     (thing.site and thing.site.link_type=='link'))}
-        ${radio_type('link_type', "self", _("text posts only"),
-                     _("only text/self posts are allowed"),
-                     (thing.site and thing.site.link_type=='self'))}
+      <table>
+        ${utils.radio_type('link_type', "any", _("any"),
+                           _("any link type is allowed"),
+                           (not thing.site or thing.site.link_type=='any'))}
+        ${utils.radio_type('link_type', "link", _("links only"),
+                           _("only links to external sites are allowed"),
+                           (thing.site and thing.site.link_type=='link'))}
+        ${utils.radio_type('link_type', "self", _("text posts only"),
+                           _("only text/self posts are allowed"),
+                           (thing.site and thing.site.link_type=='self'))}
       </table>
     </div>
   </%utils:line_field>
@@ -186,6 +163,7 @@ function update_title(elem) {
     </div>
   </%utils:line_field>
 
+% if thing.site and thing.site.domain != thing.site._defaults['domain']:
   <%utils:line_field title="${_('domain')}" css_class="usertext">
     <div class="delete-field">
       %if thing.site and c.site.domain:
@@ -194,6 +172,13 @@ function update_title(elem) {
                  ${thing.site.css_on_cname and "checked='checked'" or ""}/>
           <label for="css_on_cname">
             ${_("make custom CSS styles apply only when accessed from the cname.")}
+          </label>
+          <br/>
+          <input class="nomargin" type="checkbox"
+                 name="show_cname_sidebar" id="show_cname_sidebar"
+                 ${thing.site and thing.site.show_cname_sidebar and "checked='checked'" or ""}/>
+          <label for="show_cname_sidebar">
+            ${_("show sidebar when accessed from the cname.")}
           </label>
       %endif
     </div>
@@ -213,6 +198,7 @@ function update_title(elem) {
       </div>
     </div>
   </%utils:line_field>
+% endif
 
 %if thing.site:
   <input type="hidden" name="sr" value="${thing.site._fullname}"/> 
@@ -226,7 +212,7 @@ function update_title(elem) {
         <span class="gray">(${_("leaves this page")})</span>
         </li>
         <li>
-          <lable for="header-title">header mouseover text:</lable>
+          <label for="header-title">header mouseover text:</label>
           <input type="text" name="header-title" id="header-title"
                  value="${thing.site.header_title}"
                  />
@@ -234,7 +220,9 @@ function update_title(elem) {
         <li>
           <%utils:image_upload post_target="/api/upload_sr_img" 
                                current_image="${thing.site.header}"
-                               label="${_('upload header image')}">
+                               label="${_('upload header image')}"
+                               ask_type="${True}">
+            <br/>
             <button id="delete-img" class="delete-img"
                     %if not thing.site.header:
                        style="display: none;"
@@ -270,7 +258,7 @@ function update_title(elem) {
                  %if thing.site.sponsorship_name:
                      value="${thing.site.sponsorship_name}"
                  %else:
-                     value="${'name this campaign (for traffic)'}" class="gray"
+                     placeholder="${_('name this campaign (for traffic)')}" 
                  %endif
                  />
         </li>
@@ -279,7 +267,7 @@ function update_title(elem) {
                  %if thing.site.sponsorship_url:
                      value="${thing.site.sponsorship_url}"
                  %else:
-                     value="${'enter link url here'}" class="gray"
+                     placeholder="${_('enter link url here')}"
                  %endif
                  />
         </li>
@@ -287,7 +275,9 @@ function update_title(elem) {
           <%utils:image_upload post_target="/api/upload_sr_img" 
                                current_image="${thing.site.sponsorship_img}"
                                label="${_('upload sponsorship image')}"
-                               form_id="sponsor-upload">
+                               form_id="sponsor-upload",
+                               ask_type="${True}">
+            <br/>
             <button id="delete-sponsor" class="delete-img"
                    %if not thing.site.sponsorship_img:
                       style="display: none;"
@@ -295,6 +285,7 @@ function update_title(elem) {
                    onclick="return post_form(this.form, 'delete_sr_header');">
               ${_('delete')}
             </button>
+            
             <div class="clearleft"></div>
             <input type="hidden" name="uh" value="${c.modhash}" />
             <input type="hidden" name="r"  value="${c.site.name}" />

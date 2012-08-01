@@ -11,14 +11,15 @@
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
 # the specific language governing rights and limitations under the License.
 #
-# The Original Code is Reddit.
+# The Original Code is reddit.
 #
-# The Original Developer is the Initial Developer.  The Initial Developer of the
-# Original Code is CondeNet, Inc.
+# The Original Developer is the Initial Developer.  The Initial Developer of
+# the Original Code is reddit Inc.
 #
-# All portions of the code written by CondeNet are Copyright (c) 2006-2010
-# CondeNet, Inc. All Rights Reserved.
-################################################################################
+# All portions of the code written by reddit are Copyright (c) 2006-2012 reddit
+# Inc. All Rights Reserved.
+###############################################################################
+
 from account import *
 from link import *
 from vote import *
@@ -34,7 +35,7 @@ from r2.lib.comment_tree import user_messages, subreddit_messages
 
 from r2.lib.wrapped import Wrapped
 from r2.lib import utils
-from r2.lib.db import operators
+from r2.lib.db import operators, tdb_cassandra
 from r2.lib.filters import _force_unicode
 from copy import deepcopy
 
@@ -45,7 +46,8 @@ EXTRA_FACTOR = 1.5
 MAX_RECURSION = 10
 
 class Builder(object):
-    def __init__(self, wrap = Wrapped, keep_fn = None):
+    def __init__(self, wrap=Wrapped, keep_fn=None, stale=True):
+        self.stale = stale
         self.wrap = wrap
         self.keep_fn = keep_fn
 
@@ -72,14 +74,14 @@ class Builder(object):
         email_attrses = {}
         friend_rels = None
         if aids:
-            authors = Account._byID(aids, True) if aids else {}
+            authors = Account._byID(aids, data=True, stale=self.stale) if aids else {}
             cup_infos = Account.cup_info_multi(aids)
             if c.user_is_admin:
                 email_attrses = admintools.email_attrs(aids, return_dict=True)
             if user and user.gold:
                 friend_rels = user.friend_rels()
 
-        subreddits = Subreddit.load_subreddits(items)
+        subreddits = Subreddit.load_subreddits(items, stale=self.stale)
 
         if not user:
             can_ban_set = set()
@@ -88,7 +90,11 @@ class Builder(object):
                               if sr.can_ban(user))
 
         #get likes/dislikes
-        likes = queries.get_likes(user, items)
+        try:
+            likes = queries.get_likes(user, items)
+        except tdb_cassandra.TRANSIENT_EXCEPTIONS as e:
+            g.log.warning("Cassandra vote lookup failed: %r", e)
+            likes = {}
         uid = user._id if user else None
 
         types = {}
@@ -123,8 +129,8 @@ class Builder(object):
             if hasattr(item, "distinguished"):
                 if item.distinguished == 'yes':
                     w.distinguished = 'moderator'
-                elif item.distinguished == 'admin':
-                    w.distinguished = 'admin'
+                elif item.distinguished in ('admin', 'special'):
+                    w.distinguished = item.distinguished
 
             try:
                 w.author = authors.get(item.author_id)
@@ -145,13 +151,19 @@ class Builder(object):
             except AttributeError:
                 pass
 
-            if (w.distinguished == 'admin' and
-                w.author and w.author.name in g.admins):
+            if (w.distinguished == 'admin' and w.author):
                 add_attr(w.attribs, 'A')
 
             if w.distinguished == 'moderator':
                 add_attr(w.attribs, 'M', label=modlabel[item.sr_id],
                          link=modlink[item.sr_id])
+            
+            if w.distinguished == 'special':
+                args = w.author.special_distinguish()
+                args.pop('name')
+                if not args.get('kind'):
+                    args['kind'] = 'special'
+                add_attr(w.attribs, **args)
 
             if False and w.author and c.user_is_admin:
                 for attr in email_attrses[w.author._id]:
@@ -231,6 +243,8 @@ class Builder(object):
                     w.moderator_banned = ban_info.get('moderator_banned', False)
                     w.autobanned = ban_info.get('auto', False)
                     w.banner = ban_info.get('banner')
+                    if ban_info.get('note', None) and w.banner:
+                        w.banner += ' (%s)' % ban_info['note']
                     w.use_big_modbuttons = True
                     if getattr(w, "author", None) and w.author._spam:
                         w.show_spam = "author"
@@ -263,11 +277,12 @@ class Builder(object):
             return False
         if hasattr(item, 'subreddit') and not item.subreddit.can_view(user):
             return True
+        if hasattr(item, 'can_view_slow') and not item.can_view_slow():
+            return True
 
 class QueryBuilder(Builder):
-    def __init__(self, query, wrap = Wrapped, keep_fn = None,
-                 skip = False, **kw):
-        Builder.__init__(self, wrap, keep_fn)
+    def __init__(self, query, wrap=Wrapped, keep_fn=None, skip=False, **kw):
+        Builder.__init__(self, wrap=wrap, keep_fn=keep_fn)
         self.query = query
         self.skip = skip
         self.num = kw.get('num')
@@ -332,9 +347,6 @@ class QueryBuilder(Builder):
         last_item = None
         have_next = True
 
-        #for prewrap
-        orig_items = {}
-
         #logloop
         self.loopcount = 0
         
@@ -359,16 +371,17 @@ class QueryBuilder(Builder):
             if not first_item and self.start_count > 0:
                 first_item = new_items[0]
 
-            #pre-wrap
             if self.prewrap_fn:
+                orig_items = {}
                 new_items2 = []
                 for i in new_items:
                     new = self.prewrap_fn(i)
                     orig_items[new._id] = i
                     new_items2.append(new)
                 new_items = new_items2
+            else:
+                orig_items = dict((i._id, i) for i in new_items)
 
-            #wrap
             if self.wrap:
                 new_items = self.wrap_items(new_items)
 
@@ -379,13 +392,13 @@ class QueryBuilder(Builder):
                 if not (self.must_skip(i) or self.skip and not self.keep_item(i)):
                     items.append(i)
                     num_have += 1
+                    count = count - 1 if self.reverse else count + 1
                     if self.wrap:
-                        count = count - 1 if self.reverse else count + 1
                         i.num = count
                 last_item = i
         
-            #unprewrap the last item
-            if self.prewrap_fn and last_item:
+            # get original version of last item
+            if last_item and (self.prewrap_fn or self.wrap):
                 last_item = orig_items[last_item._id]
 
         if self.reverse:
@@ -406,6 +419,10 @@ class QueryBuilder(Builder):
                 after_count)
 
 class IDBuilder(QueryBuilder):
+    def thing_lookup(self, names):
+        return Thing._by_fullname(names, data=True, return_dict=False,
+                                  stale=self.stale)
+
     def init_query(self):
         names = list(tup(self.query))
 
@@ -448,18 +465,44 @@ class IDBuilder(QueryBuilder):
             done = True
 
         self.names, new_names = names[slice_size:], names[:slice_size]
-        new_items = Thing._by_fullname(new_names, data = True, return_dict=False)
+        new_items = self.thing_lookup(new_names)
         return done, new_items
 
+
+class FakeThing(object):
+    def __init__(self, name):
+        self._id = name
+
+class SimpleBuilder(IDBuilder):
+    def thing_lookup(self, names):
+        return [FakeThing(name) for name in names]
+
+    def init_query(self):
+        names = list(tup(self.query))
+        self.names = self._get_after(names, self.after, self.reverse)
+
+    def get_items(self):
+        items, prev, next, bcount, acount = IDBuilder.get_items(self)
+        items = [i._id for i in items]
+        if prev:
+            prev = prev._id
+        if next:
+            next = next._id
+        return (items, prev, next, bcount, acount)
+
 class SearchBuilder(IDBuilder):
+    def __init__(self, query, wrap=Wrapped, keep_fn=None, skip=False,
+                 skip_deleted_authors=True, **kw):
+        IDBuilder.__init__(self, query, wrap, keep_fn, skip, **kw)
+        self.skip_deleted_authors = skip_deleted_authors
     def init_query(self):
         self.skip = True
 
         self.start_time = time.time()
 
-        search = self.query.run()
-        names = list(search.docs)
-        self.total_num = search.hits
+        self.results = self.query.run()
+        names = list(self.results.docs)
+        self.total_num = self.results.hits
 
         after = self.after._fullname if self.after else None
 
@@ -471,7 +514,11 @@ class SearchBuilder(IDBuilder):
         # doesn't use the default keep_item because we want to keep
         # things that were voted on, even if they've chosen to hide
         # them in normal listings
+        # TODO: Consider a flag to disable this (and see listingcontroller.py)
         if item._spam or item._deleted:
+            return False
+        elif (self.skip_deleted_authors and
+              getattr(item, "author", None) and item.author._deleted):
             return False
         else:
             return True
@@ -522,8 +569,18 @@ class ModeratorMessageBuilder(MessageBuilder):
     def get_tree(self):
         if self.parent:
             return conversation(self.user, self.parent)
-        return moderator_messages(self.user)
+        sr_ids = Subreddit.reverse_moderator_ids(self.user)
+        return moderator_messages(sr_ids)
 
+class MultiredditMessageBuilder(MessageBuilder):
+    def __init__(self, user, **kw):
+        self.user = user
+        MessageBuilder.__init__(self, **kw)
+
+    def get_tree(self):
+        if self.parent:
+            return conversation(self.user, self.parent)
+        return moderator_messages(c.site.sr_ids)
 
 class TopCommentBuilder(CommentBuilder):
     """A comment builder to fetch only the top-level, non-spam,

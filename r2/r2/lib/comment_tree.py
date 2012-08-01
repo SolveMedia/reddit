@@ -11,19 +11,23 @@
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
 # the specific language governing rights and limitations under the License.
 #
-# The Original Code is Reddit.
+# The Original Code is reddit.
 #
-# The Original Developer is the Initial Developer.  The Initial Developer of the
-# Original Code is CondeNet, Inc.
+# The Original Developer is the Initial Developer.  The Initial Developer of
+# the Original Code is reddit Inc.
 #
-# All portions of the code written by CondeNet are Copyright (c) 2006-2010
-# CondeNet, Inc. All Rights Reserved.
-################################################################################
+# All portions of the code written by reddit are Copyright (c) 2006-2012 reddit
+# Inc. All Rights Reserved.
+###############################################################################
+
 from pylons import g
 from itertools import chain
 from r2.lib.utils import tup, to36
 from r2.lib.db.sorts import epoch_seconds
 from r2.lib.cache import sgm
+from r2.models.link import Link
+
+MAX_ITERATIONS = 50000
 
 def comments_key(link_id):
     return 'comments_' + str(link_id)
@@ -55,7 +59,9 @@ def add_comments(comments):
             with g.make_lock(lock_key(link_id)):
                 add_comments_nolock(link_id, coms)
         except:
-            # TODO: bare except?
+            g.log.exception(
+                'add_comments_nolock failed for link %s, recomputing tree',
+                link_id)
 
             # calculate it from scratch
             link_comments(link_id, _update = True)
@@ -78,6 +84,7 @@ def add_comments_nolock(link_id, comments):
                 for child in comment_tree[cur_cm]:
                     stack.append(child)
 
+    new_parents = {}
     for comment in comments:
         cm_id = comment._id
         p_id = comment.parent_id
@@ -101,6 +108,7 @@ def add_comments_nolock(link_id, comments):
 
         #if this comment had a parent, find the parent's parents
         if p_id:
+            new_parents[cm_id] = p_id
             for p_id in find_parents():
                 num_children[p_id] += 1
 
@@ -111,9 +119,16 @@ def add_comments_nolock(link_id, comments):
     if not r:
         r = _parent_dict_from_tree(comment_tree)
 
+    for cm_id, parent_id in new_parents.iteritems():
+#        print "Now, I set %s -> %s" % (cm_id, parent_id)
+        r[cm_id] = parent_id
+
     for comment in comments:
         cm_id = comment._id
-        r[cm_id] = p_id
+        if cm_id not in new_parents:
+            r[cm_id] = None
+#            print "And I set %s -> None" % cm_id
+
     g.permacache.set(key, r)
 
     g.permacache.set(comments_key(link_id),
@@ -152,6 +167,12 @@ def delete_comment(comment):
                 del num_children[comment._id]
             g.permacache.set(comments_key(comment.link_id),
                              (cids, comment_tree, depth, num_children))
+
+        # update the link's comment count and schedule it for search reindexing
+        link = Link._byID(comment.link_id, data = True)
+        link._incr('num_comments', -1)
+        from r2.lib.db.queries import changed
+        changed(link)
 
 def _parent_dict_from_tree(comment_tree):
     parents = {}
@@ -238,7 +259,7 @@ def link_comments_and_sort(link_id, sort):
                     % link_id)
         parents = {}
 
-    if not parents:
+    if not parents and len(cids) > 0:
         with g.make_lock(lock_key(link_id)):
             # reload from the cache so the sorter and parents are
             # maximally consistent
@@ -249,7 +270,6 @@ def link_comments_and_sort(link_id, sort):
             if not parents:
                 parents = _parent_dict_from_tree(cid_tree)
                 g.permacache.set(key, parents)
-
 
     return cids, cid_tree, depth, num_children, parents, sorter
 
@@ -268,11 +288,20 @@ def link_comments(link_id, _update=False):
         with g.make_lock(lock_key(link_id), timeout=180):
             r = _load_link_comments(link_id)
             # rebuild parent dict
-            cids, cid_tree, depth, num_children = r
+            cids, cid_tree, depth, num_children, num_comments = r
+            r = r[:-1]  # Remove num_comments from r; we don't need to cache it.
             g.permacache.set(parent_comments_key(link_id),
                              _parent_dict_from_tree(cid_tree))
 
             g.permacache.set(key, r)
+
+            # update the link's comment count and schedule it for search
+            # reindexing
+            link = Link._byID(link_id, data = True)
+            link.num_comments = num_comments
+            link._commit()
+            from r2.lib.db.queries import changed
+            changed(link)
 
         return r
 
@@ -281,6 +310,7 @@ def _load_link_comments(link_id):
     q = Comment._query(Comment.c.link_id == link_id,
                        Comment.c._deleted == (True, False),
                        Comment.c._spam == (True, False),
+                       optimize_rules=True,
                        data = True)
     comments = list(q)
     cids = [c._id for c in comments]
@@ -308,13 +338,18 @@ def _load_link_comments(link_id):
     for cm_id in cids:
         num = 0
         todo = [cm_id]
+        iteration_count = 0
         while todo:
+            if iteration_count > MAX_ITERATIONS:
+                raise Exception("bad comment tree for link %s" % link_id)
             more = comment_tree.get(todo.pop(0), ())
             num += len(more)
             todo.extend(more)
+            iteration_count += 1
         num_children[cm_id] = num
 
-    return cids, comment_tree, depth, num_children
+    num_comments = sum(1 for c in comments if not c._deleted)
+    return cids, comment_tree, depth, num_children, num_comments
 
 # message conversation functions
 def messages_key(user_id):
@@ -330,7 +365,9 @@ def add_message(message):
     if message.to_id:
         with g.make_lock(messages_lock_key(message.to_id)):
             add_message_nolock(message.to_id, message)
-    if message.sr_id:
+    # Messages to a subreddit should end in its inbox. Messages
+    # FROM a subreddit (currently, just ban messages) should NOT
+    if message.sr_id and not message.from_sr:
         with g.make_lock(sr_messages_lock_key(message.sr_id)):
             add_sr_message_nolock(message.sr_id, message)
 
@@ -443,9 +480,8 @@ def subreddit_messages(sr, update = False):
         g.permacache.set(key, trees)
     return trees
 
-def moderator_messages(user):
+def moderator_messages(sr_ids):
     from r2.models import Subreddit
-    sr_ids = Subreddit.reverse_moderator_ids(user)
 
     def multi_load_tree(sr_ids):
         srs = Subreddit._byID(sr_ids, return_dict = False)

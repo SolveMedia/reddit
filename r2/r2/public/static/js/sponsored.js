@@ -1,17 +1,38 @@
 function update_box(elem) {
-   $(elem).prevAll("*[type=checkbox]:first").attr('checked', true);
+   $(elem).prevAll('*[type="checkbox"]:first').prop('checked', true);
 };
 
 function update_bid(elem) {
     var form = $(elem).parents(".campaign");
-    var bid = parseFloat(form.find("*[name=bid]").val());
-    var ndays = ((Date.parse(form.find("*[name=enddate]").val()) -
-             Date.parse(form.find("*[name=startdate]").val())) / (86400*1000));
-    $(".bid-info").html("&nbsp; &rarr" + 
+    var is_targeted = $("#targeting").prop("checked");
+    var bid = parseFloat(form.find('*[name="bid"]').val());
+    var ndays = ((Date.parse(form.find('*[name="enddate"]').val()) -
+             Date.parse(form.find('*[name="startdate"]').val())) / (86400*1000));
+    ndays = Math.round(ndays);
+
+    var minimum_daily_bid = (is_targeted ? 30 : 20);
+    $(".minimum-spend").removeClass("error");
+    if (bid < ndays * minimum_daily_bid) {
+        $(".bid-info").addClass("error");
+        if (is_targeted) {
+            $("#targeted_minimum").addClass("error");
+        } else {
+            $("#no_targeting_minimum").addClass("error");
+        }
+
+        form.find('button[name="create"], button[name="edit"]')
+            .prop("disabled", "disabled")
+            .addClass("disabled");
+    } else {
+        $(".bid-info").removeClass("error");
+        form.find('button[name="create"], button[name="edit"]')
+            .removeProp("disabled")
+            .removeClass("disabled");
+    }
+
+    $(".bid-info").html("&nbsp; &rarr;" + 
                         "<b>$" + (bid/ndays).toFixed(2) +
          "</b> per day for <b>" + ndays + " day(s)</b>");
-    $("#duration span.gray")
-         .html( ndays == 1 ? "(1 day)" : "(" + ndays + " days)");
  }
 
 var dateFromInput = function(selector, offset) {
@@ -26,7 +47,7 @@ var dateFromInput = function(selector, offset) {
    }
 };
 
-function attach_calendar(where, min_date_src, max_date_src, callback) {
+function attach_calendar(where, min_date_src, max_date_src, callback, min_date_offset) {
      $(where).siblings(".datepicker").mousedown(function() {
             $(this).addClass("clicked active");
          }).click(function() {
@@ -42,7 +63,7 @@ function attach_calendar(where, min_date_src, max_date_src, callback) {
                $(this).datepicker(
                   {
                       defaultDate: dateFromInput(target),
-                          minDate: dateFromInput(min_date_src, 86400 * 1000),
+                          minDate: dateFromInput(min_date_src, min_date_offset),
                           maxDate: dateFromInput(max_date_src),
                           prevText: "&laquo;", nextText: "&raquo;",
                           altField: "#" + target.attr("id"),
@@ -65,12 +86,16 @@ function attach_calendar(where, min_date_src, max_date_src, callback) {
 
 function targeting_on(elem) {
     $(elem).parents(".campaign").find(".targeting")
-        .find("*[name=sr]").attr("disabled", "").end().show();
+        .find('*[name="sr"]').prop("disabled", "").end().slideDown();
+
+    update_bid(elem);
 }
 
 function targeting_off(elem) {
     $(elem).parents(".campaign").find(".targeting")
-        .find("*[name=sr]").attr("disabled", "disabled").end().hide();
+        .find('*[name="sr"]').prop("disabled", "disabled").end().slideUp();
+
+    update_bid(elem);
 }
 
 (function($) {
@@ -79,6 +104,9 @@ function get_flag_class(flags) {
     var css_class = "";
     if(flags.free) {
         css_class += " free";
+    }
+    if(flags.live) {
+        css_class += " live";
     }
     if(flags.complete) {
         css_class += " complete";
@@ -109,6 +137,10 @@ $.new_campaign = function(indx, start_date, end_date, duration,
           data += ("<input type='hidden' name='pay_url' value='" + 
                    flags.pay_url + "'/>");
       }
+      if (flags && flags.view_live_url) {
+          data += ("<input type='hidden' name='view_live_url' value='" + 
+                   flags.view_live_url + "'/>");
+      }
       var row = [start_date, end_date, duration, "$" + bid, targeting, data];
       $(".existing-campaigns .error").hide();
       var css_class = get_flag_class(flags);
@@ -123,8 +155,8 @@ $.new_campaign = function(indx, start_date, end_date, duration,
 $.update_campaign = function(indx, start_date, end_date, 
                              duration, bid, targeting, flags) {
     cancel_edit(function() {
-            $(".existing-campaigns input[name=indx]")
-                .filter("*[value=" + (indx || '0') + "]")
+            $('.existing-campaigns input[name="indx"]')
+                .filter('*[value="' + (indx || '0') + '"]')
                 .parents("tr").removeClass()
             .addClass(get_flag_class(flags))
                 .children(":first").html(start_date)
@@ -133,10 +165,10 @@ $.update_campaign = function(indx, start_date, end_date,
                 .next().html("$" + bid).removeClass()
                 .next().html(targeting)
                 .next()
-                .find("*[name=startdate]").val(start_date).end()
-                .find("*[name=enddate]").val(end_date).end()
-                .find("*[name=targeting]").val(targeting).end()
-                .find("*[name=bid]").val(bid).end()
+                .find('*[name="startdate"]').val(start_date).end()
+                .find('*[name="enddate"]').val(end_date).end()
+                .find('*[name="targeting"]').val(targeting).end()
+                .find('*[name="bid"]').val(bid).end()
                 .find("button, span").remove();
             $.set_up_campaigns();
         });
@@ -148,12 +180,18 @@ $.set_up_campaigns = function() {
     var pay = "<button>pay</button>";
     var free = "<button>free</button>";
     var repay = "<button>change</button>";
+    var view = "<button>view live</button>";
     $(".existing-campaigns tr").each(function() {
             var tr = $(this);
             var td = $(this).find("td:last");
             var bid_td = $(this).find("td:first").next().next().next()
                 .addClass("bid");
+            var target_td = $(this).find("td:nth-child(5)")
             if(td.length && ! td.children("button, span").length ) {
+                if(tr.hasClass("live")) {
+                    $(target_td).append($(view).addClass("view")
+                            .click(function() { view_campaign(tr) }));
+                }
                 /* once paid, we shouldn't muck around with the campaign */
                 if(!tr.hasClass("complete")) {
                     if (tr.hasClass("sponsor") && !tr.hasClass("free")) {
@@ -161,19 +199,19 @@ $.set_up_campaigns = function() {
                                      .click(function() { free_campaign(tr) }))
                     }
                     else if (!tr.hasClass("paid")) {
-                        $(bid_td).prepend($(pay).addClass("pay")
+                        $(bid_td).prepend($(pay).addClass("pay fancybutton")
                                      .click(function() { pay_campaign(tr) }));
                     } else if (tr.hasClass("free")) {
                         $(bid_td).addClass("free paid")
                             .prepend("<span class='info'>freebie</span>");
                     } else {
                         (bid_td).addClass("paid")
-                            .prepend($(repay).addClass("pay")
+                            .prepend($(repay).addClass("pay fancybutton")
                                      .click(function() { pay_campaign(tr) }));
                     }
-                    var e = $(edit).addClass("edit")
+                    var e = $(edit).addClass("edit fancybutton")
                         .click(function() { edit_campaign(tr); });
-                    var d = $(del).addClass("d")
+                    var d = $(del).addClass("d fancybutton")
                         .click(function() { del_campaign(tr); });
                     $(td).append(e).append(d);
                 }
@@ -233,8 +271,8 @@ function cancel_edit(callback) {
 }
 
 function del_campaign(elem) {
-    var indx = $(elem).find("*[name=indx]").val();
-    var link_id = $("#campaign").find("*[name=link_id]").val();
+    var indx = $(elem).find('*[name="indx"]').val();
+    var link_id = $("#campaign").find('*[name="link_id"]').val();
     $.request("delete_campaign", {"indx": indx, "link_id": link_id},
               null, true, "json", false);
     $(elem).children(":first").delete_table_row();
@@ -263,31 +301,31 @@ function edit_campaign(elem) {
                         var c = $("#campaign");
                         $.map(['startdate', 'enddate', 'bid', 'indx'], 
                               function(i) {
-                                  i = "*[name=" + i + "]";
+                                  i = '*[name="' + i + '"]';
                                   c.find(i).val(data_tr.find(i).val());
                               });
                         /* check if targeting is turned on */
                         var targeting = data_tr
-                            .find("*[name=targeting]").val();
-                        var radios=c.find("*[name=targeting]");
+                            .find('*[name="targeting"]').val();
+                        var radios=c.find('*[name="targeting"]');
                         if (targeting) {
-                            radios.filter("*[value=one]")
-                                .attr("checked", "checked");
-                            c.find("*[name=sr]").val(targeting).attr("disabled", "").end()
+                            radios.filter('*[value="one"]')
+                                .prop("checked", "checked");
+                            c.find('*[name="sr"]').val(targeting).prop("disabled", "").end()
                                 .find(".targeting").show();
                         }
                         else {
-                            radios.filter("*[value=none]")
-                                .attr("checked", "checked");
-                            c.find("*[name=sr]").val("").attr("disabled", "disabled").end()
+                            radios.filter('*[value="none"]')
+                                .prop("checked", "checked");
+                            c.find('*[name="sr"]').val("").prop("disabled", "disabled").end()
                                 .find(".targeting").hide();
                         }
                         /* attach the dates to the date widgets */
                         init_startdate();
                         init_enddate();
-                        c.find("button[name=edit]").show().end()
-                            .find("button[name=create]").hide().end();
-                        update_bid("*[name=bid]");
+                        c.find('button[name="edit"]').show().end()
+                            .find('button[name="create"]').hide().end();
+                        update_bid('*[name="bid"]');
                         c.fadeIn();
                     } );
             }
@@ -300,22 +338,22 @@ function create_campaign(elem) {
             init_startdate();
             init_enddate();
             $("#campaign")
-                .find("button[name=edit]").hide().end()
-                .find("button[name=create]").show().end()
-                .find("input[name=indx]").val('').end()
-                .find("input[name=sr]").val('').end()
-                .find("input[name=targeting][value=none]")
-                                .attr("checked", "checked").end()
+                .find('button[name="edit"]').hide().end()
+                .find('button[name="create"]').show().end()
+                .find('input[name="indx"]').val('').end()
+                .find('input[name="sr"]').val('').end()
+                .find('input[name="targeting"][value="none"]')
+                                .prop("checked", "checked").end()
                 .find(".targeting").hide().end()
-                .find("*[name=sr]").val("").attr("disabled", "disabled").end()
+                .find('*[name="sr"]').val("").prop("disabled", "disabled").end()
                 .fadeIn();
-            update_bid("*[name=bid]");
+            update_bid('*[name="bid"]');
         });
 }
 
 function free_campaign(elem) {
-    var indx = $(elem).find("*[name=indx]").val();
-    var link_id = $("#campaign").find("*[name=link_id]").val();
+    var indx = $(elem).find('*[name="indx"]').val();
+    var link_id = $("#campaign").find('*[name="link_id"]').val();
     $.request("freebie", {"indx": indx, "link_id": link_id},
               null, true, "json", false);
     $(elem).find(".free").fadeOut();
@@ -323,5 +361,9 @@ function free_campaign(elem) {
 }
 
 function pay_campaign(elem) {
-    $.redirect($(elem).find("input[name=pay_url]").val());
+    $.redirect($(elem).find('input[name="pay_url"]').val());
+}
+
+function view_campaign(elem) {
+    $.redirect($(elem).find('input[name="view_live_url"]').val());
 }

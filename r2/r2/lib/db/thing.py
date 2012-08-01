@@ -11,18 +11,19 @@
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
 # the specific language governing rights and limitations under the License.
 #
-# The Original Code is Reddit.
+# The Original Code is reddit.
 #
-# The Original Developer is the Initial Developer.  The Initial Developer of the
-# Original Code is CondeNet, Inc.
+# The Original Developer is the Initial Developer.  The Initial Developer of
+# the Original Code is reddit Inc.
 #
-# All portions of the code written by CondeNet are Copyright (c) 2006-2010
-# CondeNet, Inc. All Rights Reserved.
-################################################################################
-#TODO byID use Things?
+# All portions of the code written by reddit are Copyright (c) 2006-2012 reddit
+# Inc. All Rights Reserved.
+###############################################################################
+
 from __future__ import with_statement
 
-import new, sys, sha
+import new, sys
+import hashlib
 from datetime import datetime
 from copy import copy, deepcopy
 
@@ -34,6 +35,7 @@ from .. utils import iters, Results, tup, to36, Storage, thing_utils, timefromno
 from r2.config import cache
 from r2.lib.cache import sgm
 from r2.lib.log import log_text
+from r2.lib import stats
 from pylons import g
 
 
@@ -144,9 +146,9 @@ class DataThing(object):
                     cl = "???"
 
                 if self._loaded:
-                    nl = "it IS loaded."
+                    nl = "it IS loaded"
                 else:
-                    nl = "it is NOT loaded."
+                    nl = "it is NOT loaded"
 
                 # The %d format is nicer since it has no "L" at the
                 # end, but if we can't do that, fall back on %r.
@@ -167,7 +169,14 @@ class DataThing(object):
                     print "Some dumbass forgot a comma."
                     essentials = essentials,
 
-                if attr in essentials:
+                deleted = object.__getattribute__(self, "_deleted")
+
+                if deleted:
+                    nl += " and IS deleted."
+                else:
+                    nl += " and is NOT deleted."
+
+                if attr in essentials and not deleted:
                     log_text ("essentials-bandaid-reload",
                           "%s not found; %s Forcing reload." % (descr, nl),
                           "warning")
@@ -268,10 +277,19 @@ class DataThing(object):
         need_ids = [n._id for n in need]
         datas = cls._get_data(cls._type_id, need_ids)
         to_save = {}
+        try:
+            essentials = object.__getattribute__(cls, "_essentials")
+        except AttributeError:
+            essentials = ()
+
         for i in need:
             #if there wasn't any data, keep the empty dict
             i._t.update(datas.get(i._id, i._t))
             i._loaded = True
+
+            for attr in essentials:
+                if attr not in i._t:
+                    print "Warning: %s is missing %s" % (i._fullname, attr)
             i._asked_for_data = True
             to_save[i._id] = i
 
@@ -325,18 +343,31 @@ class DataThing(object):
     def _id36(self):
         return to36(self._id)
 
+    @classmethod
+    def _fullname_from_id36(cls, id36):
+        return cls._type_prefix + to36(cls._type_id) + '_' + id36
+
     @property
     def _fullname(self):
-        return self._type_prefix + to36(self._type_id) + '_' + to36(self._id)
+        return self._fullname_from_id36(self._id36)
 
     #TODO error when something isn't found?
     @classmethod
-    def _byID(cls, ids, data=False, return_dict=True, extra_props=None):
+    def _byID(cls, ids, data=False, return_dict=True, extra_props=None,
+              stale=False):
         ids, single = tup(ids, True)
         prefix = thing_prefix(cls.__name__)
 
         if not all(x <= tdb.MAX_THING_ID for x in ids):
             raise NotFound('huge thing_id in %r' % ids)
+
+        def count_found(ret, still_need):
+            cache.stats.cache_report(
+                hits=len(ret), misses=len(still_need),
+                cache_name='sgm.%s' % cls.__name__)
+
+        if not cache.stats:
+            count_found = None
 
         def items_db(ids):
             items = cls._get_item(cls._type_id, ids)
@@ -345,7 +376,8 @@ class DataThing(object):
 
             return items
 
-        bases = sgm(cache, ids, items_db, prefix)
+        bases = sgm(cache, ids, items_db, prefix, stale=stale,
+                    found_fn=count_found)
 
         #check to see if we found everything we asked for
         for i in ids:
@@ -406,7 +438,7 @@ class DataThing(object):
     @classmethod
     def _by_fullname(cls, names,
                      return_dict = True, 
-                     data=False, extra_props=None):
+                     **kw):
         names, single = tup(names, True)
 
         table = {}
@@ -431,8 +463,7 @@ class DataThing(object):
         # lookup ids for each type
         identified = {}
         for real_type, thing_ids in table.iteritems():
-            i = real_type._byID(thing_ids, data = data,
-                                extra_props = extra_props)
+            i = real_type._byID(thing_ids, **kw)
             identified[real_type] = i
 
         # interleave types in original order of the name
@@ -565,20 +596,28 @@ class Thing(DataThing):
                    bases.deleted, bases.spam, id)
 
     @classmethod
-    def _query(cls, *rules, **kw):
+    def _query(cls, *all_rules, **kw):
         need_deleted = True
         need_spam = True
         #add default spam/deleted
-        for r in rules:
+        rules = []
+        optimize_rules = kw.pop('optimize_rules', False)
+        for r in all_rules:
             if not isinstance(r, operators.op):
                 continue
             if r.lval_name == '_deleted':
                 need_deleted = False
+                # if the caller is explicitly unfiltering based on this column,
+                # we don't need this rule at all. taking this out can save us a
+                # join that is very expensive on pg9.
+                if optimize_rules and r.rval == (True, False):
+                    continue
             elif r.lval_name == '_spam':
                 need_spam = False
-
-        if need_deleted or need_spam:
-            rules = list(rules)
+                # see above for explanation
+                if optimize_rules and r.rval == (True, False):
+                    continue
+            rules.append(r)
 
         if need_deleted:
             rules.append(cls.c._deleted == False)
@@ -741,10 +780,6 @@ def Relation(type1, type2, denorm1 = None, denorm2 = None):
             self._name = 'un' + self._name
 
         @classmethod
-        def _fast_query_timestamp_touch(cls, thing1):
-            thing_utils.set_last_modified_for_cls(thing1, cls._type_name)
-
-        @classmethod
         def _fast_query(cls, thing1s, thing2s, name, data=True, eager_load=True,
                         thing_data=False, timestamp_optimize = False):
             """looks up all the relationships between thing1_ids and
@@ -759,26 +794,6 @@ def Relation(type1, type2, denorm1 = None, denorm2 = None):
 
             name = tup(name)
 
-            def can_skip_lookup(t1, t2, name):
-                # we can't possibly have voted on things that were
-                # created after the last time we voted. for relations
-                # that have an invariant like this we can avoid doing
-                # these lookups as long as the relation takes
-                # responsibility for keeping the timestamp up-to-date
-                thing1 = thing1_dict[t1]
-                thing2 = thing2_dict[t2]
-
-                last_done = thing_utils.get_last_modified_for_cls(
-                    thing1, cls._type_name)
-
-                if not last_done:
-                    return False
-
-                if thing2._date > last_done:
-                    return True
-
-                return False
-
             # permute all of the pairs
             pairs = set((x, y, n)
                         for x in thing1_ids
@@ -792,8 +807,6 @@ def Relation(type1, type2, denorm1 = None, denorm2 = None):
                 t2_ids = set()
                 names = set()
                 for t1, t2, name in pairs:
-                    if timestamp_optimize and can_skip_lookup(t1, t2, name):
-                        continue
                     t1_ids.add(t1)
                     t2_ids.add(t2)
                     names.add(name)
@@ -865,6 +878,7 @@ class Query(object):
         self._limit = kw.get('limit')
         self._data = kw.get('data')
         self._sort = kw.get('sort', ())
+        self._filter_primary_sort_only = kw.get('filter_primary_sort_only', False)
 
         self._filter(*rules)
     
@@ -905,8 +919,16 @@ class Query(object):
 
     def _dir(self, thing, reverse):
         ors = []
+
+        # this fun hack lets us simplify the query on /r/all 
+        # for postgres-9 compatibility. please remove it when
+        # /r/all is precomputed.
+        sorts = range(len(self._sort))
+        if self._filter_primary_sort_only:
+            sorts = [0]
+
         #for each sort add and a comparison operator
-        for i in range(len(self._sort)):
+        for i in sorts:
             s = self._sort[i]
 
             if isinstance(s, operators.asc):
@@ -952,7 +974,7 @@ class Query(object):
             rules.sort()
             for r in rules:
                 i += str(r)
-        return sha.new(i).hexdigest()
+        return hashlib.sha1(i).hexdigest()
 
     def __iter__(self):
         used_cache = False
@@ -1049,9 +1071,9 @@ def load_things(rels, load_data=False):
     for rel in rels:
         t1_ids.add(rel._thing1_id)
         t2_ids.add(rel._thing2_id)
-    kind._type1._byID(t1_ids, load_data)
+    kind._type1._byID(t1_ids, data=load_data)
     if not kind._gay():
-        t2_items = kind._type2._byID(t2_ids, load_data)
+        t2_items = kind._type2._byID(t2_ids, data=load_data)
 
 class Relations(Query):
     #params are thing1, thing2, name, date

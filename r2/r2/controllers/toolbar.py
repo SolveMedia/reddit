@@ -11,14 +11,15 @@
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
 # the specific language governing rights and limitations under the License.
 #
-# The Original Code is Reddit.
+# The Original Code is reddit.
 #
-# The Original Developer is the Initial Developer.  The Initial Developer of the
-# Original Code is CondeNet, Inc.
+# The Original Developer is the Initial Developer.  The Initial Developer of
+# the Original Code is reddit Inc.
 #
-# All portions of the code written by CondeNet are Copyright (c) 2006-2010
-# CondeNet, Inc. All Rights Reserved.
-################################################################################
+# All portions of the code written by reddit are Copyright (c) 2006-2012 reddit
+# Inc. All Rights Reserved.
+###############################################################################
+
 from reddit_base import RedditController
 from r2.lib.pages import *
 from r2.models import *
@@ -30,15 +31,17 @@ from r2.lib.template_helpers import add_sr
 from r2.lib import utils
 from validator import *
 from pylons import c, Response
+from r2.models.admintools import is_shamed_domain
 
 import string
 
 # strips /r/foo/, /s/, or both
-strip_sr          = re.compile('^/r/[a-zA-Z0-9_-]+')
-strip_s_path      = re.compile('^/s/')
-leading_slash     = re.compile('^/+')
-has_protocol      = re.compile('^https?:')
-need_insert_slash = re.compile('^https?:/[^/]')
+strip_sr          = re.compile('\A/r/[a-zA-Z0-9_-]+')
+strip_s_path      = re.compile('\A/s/')
+leading_slash     = re.compile('\A/+')
+has_protocol      = re.compile('\A[a-zA-Z_-]+:')
+allowed_protocol  = re.compile('\Ahttps?:')
+need_insert_slash = re.compile('\Ahttps?:/[^/]')
 def demangle_url(path):
     # there's often some URL mangling done by the stack above us, so
     # let's clean up the URL before looking it up
@@ -46,7 +49,10 @@ def demangle_url(path):
     path = strip_s_path.sub('', path)
     path = leading_slash.sub("", path)
 
-    if not has_protocol.match(path):
+    if has_protocol.match(path):
+        if not allowed_protocol.match(path):
+            return None
+    else:
         path = 'http://%s' % path
 
     if need_insert_slash.match(path):
@@ -97,6 +103,10 @@ class ToolbarController(RedditController):
         elif link.is_self or not link.subreddit_slow.can_view(c.user):
             return self.redirect(link.url)
 
+        # if the domain is shame-banned, bail out.
+        if is_shamed_domain(link.url, request.ip)[0]:
+            self.abort404()
+
         if link.has_thumbnail:
             thumbnail = thumbnail_url(link)
         else:
@@ -116,6 +126,10 @@ class ToolbarController(RedditController):
 
         if not path:
             # it was malformed
+            self.abort404()
+
+        # if the domain is shame-banned, bail out.
+        if is_shamed_domain(path, request.ip)[0]:
             self.abort404()
 
         link = utils.link_from_url(path, multiple = False)
@@ -203,12 +217,16 @@ class ToolbarController(RedditController):
         if link:
             res = link[0]
         elif url:
+            url = demangle_url(url)
+            if not url:  # also check for validity
+                return self.abort404()
+
             res = FrameToolbar(link = None,
                                title = None,
                                url = url,
                                expanded = False)
         else:
-            self.abort404()
+            return self.abort404()
         return spaceCompress(res.render())
 
     @validate(link = VByName('id'))

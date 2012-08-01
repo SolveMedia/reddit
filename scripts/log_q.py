@@ -1,4 +1,26 @@
 #! /usr/bin/python
+# The contents of this file are subject to the Common Public Attribution
+# License Version 1.0. (the "License"); you may not use this file except in
+# compliance with the License. You may obtain a copy of the License at
+# http://code.reddit.com/LICENSE. The License is based on the Mozilla Public
+# License Version 1.1, but Sections 14 and 15 have been added to cover use of
+# software over a computer network and provide for limited attribution for the
+# Original Developer. In addition, Exhibit A has been modified to be consistent
+# with Exhibit B.
+#
+# Software distributed under the License is distributed on an "AS IS" basis,
+# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
+# the specific language governing rights and limitations under the License.
+#
+# The Original Code is reddit.
+#
+# The Original Developer is the Initial Developer.  The Initial Developer of
+# the Original Code is reddit Inc.
+#
+# All portions of the code written by reddit are Copyright (c) 2006-2012 reddit
+# Inc. All Rights Reserved.
+###############################################################################
+
 
 from r2.lib import amqp, emailer
 from pylons import g
@@ -74,7 +96,9 @@ def run(streamfile=None, verbose=False):
                 make_lock_seen = True
             elif (text.startswith("(ProgrammingError) server closed the connection")):
                 flaky_db_seen = True
-            if '/cassandra/' in filename:
+            if '/cassandra/' in filename.lower():
+                cassandra_seen = True
+            if '/pycassa/' in filename.lower():
                 cassandra_seen = True
             key_material += "%s %s " % (filename, funcname)
             pretty_lines.append ("%s:%s: %s()" % (filename, lineno, funcname))
@@ -95,18 +119,8 @@ def run(streamfile=None, verbose=False):
         elif exc_desc.startswith("(OperationalError) server closed the " +
                                  "connection unexpectedly"):
             fingerprint = "flaky_db_op"
-        elif exc_type == "ProgrammingError" and flaky_db_seen:
-            fingerprint = "flaky_db_prog"
-            # SQLAlchemy includes the entire query in the exception
-            # description which can sometimes be gigantic, in the case of
-            # SELECTs. Get rid of it.
-            select_pos = exc_str.find("SELECT")
-            if select_pos > 0:
-                exc_str = exc_str[pos]
-        elif exc_type == "NoServerAvailable":
-            fingerprint = "cassandra_suckitude"
-        elif exc_type == "TimedOutException" and cassandra_seen:
-            fingerprint = "cassandra_suckitude #2"
+        elif cassandra_seen:
+            fingerprint = "something's wrong with cassandra"
         else:
             fingerprint = md5(key_material).hexdigest()
 
@@ -143,6 +157,9 @@ def run(streamfile=None, verbose=False):
 
         if not existing:
             existing = dict(exception=exc_str, traceback=tb, occurrences=[])
+
+        existing.setdefault('times_seen', 0)
+        existing['times_seen'] += 1
 
         limited_append(existing['occurrences'], d['occ'])
 

@@ -11,14 +11,15 @@
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
 # the specific language governing rights and limitations under the License.
 #
-# The Original Code is Reddit.
+# The Original Code is reddit.
 #
-# The Original Developer is the Initial Developer.  The Initial Developer of the
-# Original Code is CondeNet, Inc.
+# The Original Developer is the Initial Developer.  The Initial Developer of
+# the Original Code is reddit Inc.
 #
-# All portions of the code written by CondeNet are Copyright (c) 2006-2010
-# CondeNet, Inc. All Rights Reserved.
-################################################################################
+# All portions of the code written by reddit are Copyright (c) 2006-2012 reddit
+# Inc. All Rights Reserved.
+###############################################################################
+
 from email.MIMEText import MIMEText
 from pylons.i18n import _
 from pylons import c, g
@@ -26,6 +27,8 @@ from r2.lib.utils import timeago, query_string, randstr
 from r2.models import passhash, Email, DefaultSR, has_opted_out, Account, Award
 import os, random, datetime
 import traceback, sys, smtplib
+from r2.models.token import EmailVerificationToken, PasswordResetToken
+
 
 def _feedback_email(email, body, kind, name='', reply_to = ''):
     """Function for handling feedback and ad_inq emails.  Adds an
@@ -63,14 +66,14 @@ def verify_email(user, dest):
     For verifying an email address
     """
     from r2.lib.pages import VerifyEmail
-    key = passhash(user.name, user.email)
     user.email_verified = False
     user._commit()
     Award.take_away("verified_email", user)
-    emaillink = ('http://' + g.domain + '/verification/' + key
+
+    token = EmailVerificationToken._new(user)
+    emaillink = ('http://' + g.domain + '/verification/' + token._id
                  + query_string(dict(dest=dest)))
     g.log.debug("Generated email verification link: " + emaillink)
-    g.cache.set("email_verify_%s" %key, user._id, time=1800)
 
     _system_email(user.email,
                   VerifyEmail(user=user,
@@ -82,15 +85,25 @@ def password_email(user):
     For resetting a user's password.
     """
     from r2.lib.pages import PasswordReset
-    key = passhash(randstr(64, reallyrandom = True), user.email)
-    passlink = 'http://' + g.domain + '/resetpassword/' + key
-    print "Generated password reset link: " + passlink
-    g.cache.set("reset_%s" %key, user._id, time=1800)
+
+    reset_count_key = "email-reset_count_%s" % user._id
+    g.cache.add(reset_count_key, 0, time=3600 * 12)
+    if g.cache.incr(reset_count_key) > 3:
+        return False
+
+    reset_count_global = "email-reset_count_global"
+    g.cache.add(reset_count_global, 0, time=3600)
+    if g.cache.incr(reset_count_global) > 1000:
+        raise ValueError("Somebody's beating the hell out of the password reset box")
+
+    token = PasswordResetToken._new(user)
+    passlink = 'http://' + g.domain + '/resetpassword/' + token._id
+    g.log.info("Generated password reset link: " + passlink)
     _system_email(user.email,
                   PasswordReset(user=user,
                                 passlink=passlink).render(style='email'),
                   Email.Kind.RESET_PASSWORD)
-
+    return True
 
 def feedback_email(email, body, name='', reply_to = ''):
     """Queues a feedback email to the feedback account."""
@@ -138,15 +151,19 @@ def send_queued_mail(test = False):
         session = smtplib.SMTP(g.smtp_server)
     def sendmail(email):
         try:
+            mimetext = email.to_MIMEText()
+            if mimetext is None:
+                print ("Got None mimetext for email from %r and to %r"
+                       % (email.fr_addr, email.to_addr))
             if test:
-                print email.to_MIMEText().as_string()
+                print mimetext.as_string()
             else:
                 session.sendmail(email.fr_addr, email.to_addr,
-                                 email.to_MIMEText().as_string())
+                                 mimetext.as_string())
                 email.set_sent(rejected = False)
         # exception happens only for local recipient that doesn't exist
         except (smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused,
-                UnicodeDecodeError):
+                UnicodeDecodeError, AttributeError):
             # handle error and print, but don't stall the rest of the queue
             print "Handled error sending mail (traceback to follow)"
             traceback.print_exc(file = sys.stdout)
@@ -240,9 +257,9 @@ def finished_promo(thing):
     return _promo_email(thing, Email.Kind.FINISHED_PROMO)
 
 
-def send_html_email(to_addr, from_addr, subject, html):
+def send_html_email(to_addr, from_addr, subject, html, subtype="html"):
     from r2.lib.filters import _force_utf8
-    msg = MIMEText(_force_utf8(html), "html")
+    msg = MIMEText(_force_utf8(html), subtype)
     msg["Subject"] = subject
     msg["From"] = from_addr
     msg["To"] = to_addr

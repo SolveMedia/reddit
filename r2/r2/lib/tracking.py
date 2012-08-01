@@ -11,14 +11,15 @@
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
 # the specific language governing rights and limitations under the License.
 #
-# The Original Code is Reddit.
+# The Original Code is reddit.
 #
-# The Original Developer is the Initial Developer.  The Initial Developer of the
-# Original Code is CondeNet, Inc.
+# The Original Developer is the Initial Developer.  The Initial Developer of
+# the Original Code is reddit Inc.
 #
-# All portions of the code written by CondeNet are Copyright (c) 2006-2010
-# CondeNet, Inc. All Rights Reserved.
-################################################################################
+# All portions of the code written by reddit are Copyright (c) 2006-2012 reddit
+# Inc. All Rights Reserved.
+###############################################################################
+
 from base64 import standard_b64decode as b64dec, \
      standard_b64encode as b64enc
 from pylons import request
@@ -26,7 +27,8 @@ from Crypto.Cipher import AES
 from random import choice
 from pylons import g, c
 from urllib import quote_plus, unquote_plus
-import sha
+import hashlib
+import urllib
 
 key_len = 16
 pad_len = 32
@@ -136,10 +138,15 @@ class UserInfo(Info):
     _tracked = ['name', 'site', 'lang', 'cname']
     tracker_url = g.tracker_url
 
-    def init_defaults(self):
-        self.name = safe_str(c.user.name if c.user_is_loggedin else '')
-        self.site = safe_str(c.site.name if c.site else '')
-        action = ""
+    @staticmethod
+    def get_site():
+        return safe_str(c.site.name if c.site else '')
+
+    @staticmethod
+    def get_srpath():
+        name = UserInfo.get_site()
+
+        action = None
         if c.render_style in ("mobile", "compact"):
             action = c.render_style
         else:
@@ -147,9 +154,18 @@ class UserInfo(Info):
                 action = request.environ['pylons.routes_dict'].get('action')
             except Exception,e:
                 g.log.error(e)
-        if action:
-            self.site += "-%s" % action
 
+        if not action:
+            return name
+        return '-'.join((name, action))
+
+    @staticmethod
+    def get_usertype():
+        return "loggedin" if c.user_is_loggedin else "guest"
+
+    def init_defaults(self):
+        self.name = safe_str(c.user.name if c.user_is_loggedin else '')
+        self.site = UserInfo.get_srpath()
         self.lang = safe_str(c.lang if c.lang else '')
         self.cname = safe_str(c.cname)
 
@@ -166,8 +182,8 @@ class PromotedLinkInfo(Info):
 
     @classmethod
     def make_hash(cls, ip, fullname):
-        return sha.new("%s%s%s" % (ip, fullname,
-                                   g.tracking_secret)).hexdigest()
+        return hashlib.sha1("%s%s%s" % (ip, fullname,
+                                        g.tracking_secret)).hexdigest()
 
     def tracking_url(self):
         return (self.tracker_url + "?hash=" +
@@ -184,7 +200,8 @@ class PromotedLinkClickInfo(PromotedLinkInfo):
         return PromotedLinkInfo.init_defaults(self, **kw)
 
     def tracking_url(self):
-        s = (PromotedLinkInfo.tracking_url(self) + '&url=' + self.dest)
+        s = (PromotedLinkInfo.tracking_url(self) + '&url=' +
+             urllib.quote_plus(self.dest))
         return s
 
 class AdframeInfo(PromotedLinkInfo):
@@ -192,8 +209,8 @@ class AdframeInfo(PromotedLinkInfo):
 
     @classmethod
     def make_hash(cls, ip, fullname):
-        return sha.new("%s%s" % (fullname,
-                                 g.tracking_secret)).hexdigest()
+        return hashlib.sha1("%s%s" % (fullname,
+                                      g.tracking_secret)).hexdigest()
 
 
 

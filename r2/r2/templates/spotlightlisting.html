@@ -4,23 +4,24 @@
 ## http://code.reddit.com/LICENSE. The License is based on the Mozilla Public
 ## License Version 1.1, but Sections 14 and 15 have been added to cover use of
 ## software over a computer network and provide for limited attribution for the
-## Original Developer. In addition, Exhibit A has been modified to be consistent
-## with Exhibit B.
+## Original Developer. In addition, Exhibit A has been modified to be
+## consistent with Exhibit B.
 ##
 ## Software distributed under the License is distributed on an "AS IS" basis,
 ## WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
 ## the specific language governing rights and limitations under the License.
 ##
-## The Original Code is Reddit.
+## The Original Code is reddit.
 ##
 ## The Original Developer is the Initial Developer.  The Initial Developer of
-## the Original Code is CondeNet, Inc.
+## the Original Code is reddit Inc.
 ##
-## All portions of the code written by CondeNet are Copyright (c) 2006-2010
-## CondeNet, Inc. All Rights Reserved.
-################################################################################
+## All portions of the code written by reddit are Copyright (c) 2006-2012
+## reddit Inc. All Rights Reserved.
+###############################################################################
 
 <%namespace file="printablebuttons.html" import="ynbutton"/>
+<%namespace file="utils.html" import="text_with_links"/>
 <% 
    from r2.lib.template_helpers import static
 %>
@@ -30,10 +31,6 @@
      lookup = dict((t._fullname, t) for t in thing.things)
      seen = set([])
    %>
-  <script type="text/javascript">
-    ## fortunately, python arrays print in JS-compatible form.
-    var organic_links = ${thing.spotlight_links};
-  </script>
   %for name in thing.spotlight_links:
     %if name in seen:
       <% pass %>
@@ -46,10 +43,8 @@
   %endfor
 
   <div class="nextprev">
-    <img src="${static('prev_organic.png')}" alt="prev"
-         onclick="return get_organic(this, false)"/>
-    <img src="${static('next_organic.png')}" alt="next" 
-         onclick="return get_organic(this, true)" />
+    <button class="arrow prev" onclick="get_organic(this, false)">prev</button>
+    <button class="arrow next" onclick="get_organic(this, true)">next</button>
   </div>
   
   <div class="help">
@@ -57,40 +52,22 @@
   </div>
 </div>
 
-<%
-  fmt = _("Click %(here)s to close help.")
-  title = _("here")
-  link = '<a class="close" href="javascript:void(0)">%s</a>' % title
-  link = (fmt % dict(here = link))
-  link = unsafe(link.replace(" <", "&#32;<").replace("> ", ">&#32;"))
-%>
-
-<div class="help help-cover juryduty">
-    <p>
-      ${_("Sometimes reddit needs to ask the community to help fight spam. This is your chance to take part in that.")}
-      &#32;
-      <a href="/help/deputies">
-        ${_("Click here for more info.")}
-      </a>
-    </p>
-    ${ynbutton(_("here"), _("This element has been disabled."),
-               "disable_ui", callback = "disappear_help",
-               format = _("Click %(here)s to disable this feature."),
-               format_arg = "here",
-               hidden_data = dict(id="organic"))}
-    ${link}
-</div>
-
 <div class="help help-cover promoted">
     <p>
-      This sponsored link is an advertisement generated with our&#32;<a href="http://www.reddit.com/help/selfservicepromotion">self-serve advertisement tool.</a>&#32.  
+      ${text_with_links(
+        _("This sponsored link is an advertisement generated with our %(self_serve_advertisement_tool)s."),
+          self_serve_advertisement_tool=dict(link_text=_("self-serve advertisement tool"), path="http://www.reddit.com/help/selfservicepromotion")
+      )}
     </p>
     <p>
-      Use of this tool is open to all members or reddit.com, and for as little as $20 you can advertise in this area.&#32;<a href="/ad_inq">Get started &raquo;</a>
+      ${text_with_links(
+        _("Use of this tool is open to all members of reddit.com, and for as little as $20 you can advertise in this area. %(get_started)s"),
+          get_started=dict(link_text=unsafe(_("Get started &rsaquo;")), path="/ad_inq")
+      )}
     </p>
-    <p>
-      ${link}
-    </p>
+    <div class="help">
+      <a class="close" href="javascript:void(0)">${_("close help")}</a>
+    </div>
 </div>
 
 <div class="help help-cover organic">
@@ -99,19 +76,16 @@
             " links here to help them become popular, and click" +
             " the forwards and backwards buttons to view more. ")}
     </p>
-        %if c.user_is_loggedin:
-          ${ynbutton(_("here"), _("This element has been disabled."),
-                     "disable_ui", callback = "disappear_help",
-                     format = _("Click %(here)s to disable this feature."),
-                     format_arg = "here",
-                     hidden_data = dict(id="organic"))}
-        %else:
-         <p>
-        %endif
-           ${link}
-        %if not c.user_is_loggedin:
-         </p>
-        %endif
+    %if c.user_is_loggedin:
+      ${ynbutton(_("here"), _("This element has been disabled."),
+                 "disable_ui", callback = "disappear_help",
+                 format = _("Click %(here)s to disable this feature."),
+                 format_arg = "here",
+                 hidden_data = dict(id="organic"))}
+    %endif
+    <div class="help">
+      <a class="close" href="javascript:void(0)">${_("close help")}</a>
+    </div>
 </div>
 
 <script type="text/javascript">
@@ -123,14 +97,13 @@
     $(function() {
         $(".help")
             .find("a.open").click(function() {
-               var l = $(this).parents(".organic-listing").hide();
+               var l = $(this).parents(".organic-listing");
                if (l.find(".thing:visible").hasClass("promoted")) {
                     l.siblings(".help.promoted").show();
-               } else if (l.find(".thing:visible").hasClass("ontrial")) {
-                    l.siblings(".help.juryduty").show();
                } else {
                     l.siblings(".help.organic").show();
                }
+               l.hide();
             }).end()
             .find("a.close").click(function() {
               $(this).parents(".spacer")

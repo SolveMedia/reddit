@@ -11,14 +11,15 @@
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
 # the specific language governing rights and limitations under the License.
 #
-# The Original Code is Reddit.
+# The Original Code is reddit.
 #
-# The Original Developer is the Initial Developer.  The Initial Developer of the
-# Original Code is CondeNet, Inc.
+# The Original Developer is the Initial Developer.  The Initial Developer of
+# the Original Code is reddit Inc.
 #
-# All portions of the code written by CondeNet are Copyright (c) 2006-2010
-# CondeNet, Inc. All Rights Reserved.
-################################################################################
+# All portions of the code written by reddit are Copyright (c) 2006-2012 reddit
+# Inc. All Rights Reserved.
+###############################################################################
+
 from api import *
 from pylons import g
 from r2.models.bidding import Bid
@@ -116,7 +117,7 @@ def auth_transaction(amount, user, payid, thing, campaign, test = None):
         return bid.transaction, ""
 
     elif int(payid) in PayID.get_ids(user):
-        order = Order(invoiceNumber = "%dT%d" % (user._id, thing._id))
+        order = Order(invoiceNumber = "T%dC%d" % (thing._id, campaign))
         success, res = _make_transaction(ProfileTransAuthOnly,
                                          amount, user, payid,
                                          order = order, test = test)
@@ -152,6 +153,7 @@ def void_transaction(user, trans_id, campaign, test = None):
 
 
 def is_charged_transaction(trans_id, campaign):
+    if not trans_id: return False # trans_id == 0 means no bid
     bid =  Bid.one(transaction = trans_id, campaign = campaign)
     return bid.is_charged()
 

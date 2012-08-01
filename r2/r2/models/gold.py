@@ -11,26 +11,27 @@
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
 # the specific language governing rights and limitations under the License.
 #
-# The Original Code is Reddit.
+# The Original Code is reddit.
 #
-# The Original Developer is the Initial Developer.  The Initial Developer of the
-# Original Code is CondeNet, Inc.
+# The Original Developer is the Initial Developer.  The Initial Developer of
+# the Original Code is reddit Inc.
 #
-# All portions of the code written by CondeNet are Copyright (c) 2006-2010
-# CondeNet, Inc. All Rights Reserved.
-################################################################################
+# All portions of the code written by reddit are Copyright (c) 2006-2012 reddit
+# Inc. All Rights Reserved.
+###############################################################################
 
 from r2.lib.db.tdb_sql import make_metadata, index_str, create_table
 
 from pylons import g, c
 from datetime import datetime
 import sqlalchemy as sa
-from sqlalchemy.exceptions import IntegrityError
+from sqlalchemy.exc import IntegrityError
 
 from xml.dom.minidom import Document
 from r2.lib.utils import tup, randstr
 from httplib import HTTPSConnection
 from urlparse import urlparse
+from time import time
 import socket, base64
 from BeautifulSoup import BeautifulStoneSoup
 
@@ -47,7 +48,7 @@ gold_table = sa.Table('reddit_gold', METADATA,
                       # status can be: invalid, unclaimed, claimed
                       sa.Column('status', sa.String, nullable = False),
                       sa.Column('date', sa.DateTime(timezone=True),
-                                nullable = False, 
+                                nullable = False,
                                 default = sa.func.now()),
                       sa.Column('payer_email', sa.String, nullable = False),
                       sa.Column('paying_id', sa.String, nullable = False),
@@ -68,7 +69,7 @@ create_table(gold_table, indices)
 def create_unclaimed_gold (trans_id, payer_email, paying_id,
                            pennies, days, secret, date,
                            subscr_id = None):
-    
+
     try:
         gold_table.insert().execute(trans_id=str(trans_id),
                                     subscr_id=subscr_id,
@@ -102,7 +103,17 @@ def notify_unclaimed_gold(txn_id, gold_secret, payer_email, source):
 
     # No point in i18n, since we don't have access to the user's
     # language info (or name) at this point
-    body = """
+    if gold_secret.startswith("cr_"):
+        body = """
+Thanks for buying reddit gold gift creddits! We have received your %s
+transaction, number %s.
+
+Your secret claim code is %s. To associate the
+creddits with your reddit account, just visit
+%s
+""" % (source, txn_id, gold_secret, url)
+    else:
+        body = """
 Thanks for subscribing to reddit gold! We have received your %s
 transaction, number %s.
 
@@ -116,10 +127,10 @@ subscription with your reddit account -- just visit
 
 def create_claimed_gold (trans_id, payer_email, paying_id,
                          pennies, days, secret, account_id, date,
-                         subscr_id = None):
+                         subscr_id = None, status="claimed"):
     gold_table.insert().execute(trans_id=trans_id,
                                 subscr_id=subscr_id,
-                                status="claimed",
+                                status=status,
                                 payer_email=payer_email,
                                 paying_id=paying_id,
                                 pennies=pennies,
@@ -127,6 +138,28 @@ def create_claimed_gold (trans_id, payer_email, paying_id,
                                 secret=secret,
                                 account_id=account_id,
                                 date=date)
+
+def create_gift_gold (giver_id, recipient_id, days, date, signed):
+    trans_id = "X%d%s-%s" % (int(time()), randstr(2), 'S' if signed else 'A')
+
+    gold_table.insert().execute(trans_id=trans_id,
+                                status="gift",
+                                paying_id=giver_id,
+                                payer_email='',
+                                pennies=0,
+                                days=days,
+                                account_id=recipient_id,
+                                date=date)
+
+def account_by_payingid(paying_id):
+    s = sa.select([sa.distinct(gold_table.c.account_id)],
+                  gold_table.c.paying_id == paying_id)
+    res = s.execute().fetchall()
+
+    if len(res) != 1:
+        return None
+
+    return int(res[0][0])
 
 # returns None if the ID was never valid
 # returns "already claimed" if it's already been claimed
@@ -249,6 +282,15 @@ def process_google_transaction(trans_id):
 
     # get the financial details
     auth = trans.find("authorization-amount-notification")
+    
+    # creddits?
+    is_creddits = False
+    cart = trans.find("shopping-cart")
+    if cart:
+        for item in cart.findAll("item-name"):
+            if "creddit" in item.contents[0]:
+                is_creddits = True
+                break
 
     if not auth:
         # see if the payment was declinded
@@ -268,7 +310,13 @@ def process_google_transaction(trans_id):
         days = None
         try:
             pennies = int(float(auth.find("order-total").contents[0])*100)
-            if pennies == 2999:
+            if is_creddits:
+                secret = "cr_"
+                if pennies >= 2999:
+                    days = 12 * 31 * int(pennies / 2999)
+                else:
+                    days = 31 * int(pennies / 399)
+            elif pennies == 2999:
                 secret = "ys_"
                 days = 366
             elif pennies == 399:
@@ -280,9 +328,9 @@ def process_google_transaction(trans_id):
                     sa.and_(gold_table.c.status == 'uncharged',
                             gold_table.c.trans_id == 'g' + str(trans_id)),
                     values = { gold_table.c.status : "strange",
-                               gold_table.c.pennies : pennies, 
+                               gold_table.c.pennies : pennies,
                                gold_table.c.payer_email : email,
-                               gold_table.c.paying_id : payer_id  
+                               gold_table.c.paying_id : payer_id
                                }).execute()
                 return
         except ValueError:

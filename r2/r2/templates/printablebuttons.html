@@ -4,23 +4,23 @@
 ## http://code.reddit.com/LICENSE. The License is based on the Mozilla Public
 ## License Version 1.1, but Sections 14 and 15 have been added to cover use of
 ## software over a computer network and provide for limited attribution for the
-## Original Developer. In addition, Exhibit A has been modified to be consistent
-## with Exhibit B.
+## Original Developer. In addition, Exhibit A has been modified to be
+## consistent with Exhibit B.
 ##
 ## Software distributed under the License is distributed on an "AS IS" basis,
 ## WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
 ## the specific language governing rights and limitations under the License.
 ##
-## The Original Code is Reddit.
+## The Original Code is reddit.
 ##
 ## The Original Developer is the Initial Developer.  The Initial Developer of
-## the Original Code is CondeNet, Inc.
+## the Original Code is reddit Inc.
 ##
-## All portions of the code written by CondeNet are Copyright (c) 2006-2010
-## CondeNet, Inc. All Rights Reserved.
-################################################################################
-<%namespace file="utils.html" import="plain_link" />
-<%namespace file="utils.html" import="pretty_button" />
+## All portions of the code written by reddit are Copyright (c) 2006-2012
+## reddit Inc. All Rights Reserved.
+###############################################################################
+
+<%namespace file="utils.html" import="plain_link, pretty_button" />
 
 <%!
    from r2.lib.strings import strings
@@ -42,8 +42,10 @@
     %if not getattr(thing.thing, "use_big_modbuttons", False):
       %if not thing.show_spam:
         <li>
-           ${self.state_button("remove", _("remove"),
-              "return change_state(this, 'remove');", _("removed"))}
+           ${ynbutton(_("spam"), _("spammed"), "remove")}
+        </li>
+        <li>
+           ${ynbutton(_("remove"), _("removed"), "remove", hidden_data=dict(spam=False))}
         </li>
       %endif
 
@@ -59,11 +61,26 @@
       ${ynbutton(_("report"), _("reported"), "report", "hide_thing")}
     </li>
   %endif
+  %if thing.show_marknsfw:
+    <li>${ynbutton(_("nsfw"), _("marked"), "marknsfw")}</li>
+  %endif
+  %if thing.show_unmarknsfw:
+    <li>${ynbutton(_("un-nsfw"), _("unmarked"), "unmarknsfw")}</li>
+  %endif
+  %if not getattr(thing, 'promoted', None) and c.site.link_flair_position and thing.show_flair:
+    <li>
+      <a class="flairselectbtn" href="javascript://void(0)">${_('flair')}</a>
+      <div class="flairselector drop-choices"></div>
+      <form>
+        <input type="hidden" name="link" value="${thing.thing._fullname}">
+      </form>
+    </li>
+  %endif
 </%def>
 
-<%def name="distinguish_setter(value)">
+<%def name="distinguish_setter(name, value=None)">
   <a href="javascript:void(0)"
-     onclick="return set_distinguish(this, '${value}')">${_(value)}</a>
+     onclick="return set_distinguish(this, '${value or name}')">${_(name)}</a>
 </%def>
 
 <%def name="distinguish()">
@@ -76,15 +93,26 @@
       <span class="option error">
          ${_("distinguish this?")}
 
+         ## Note: can_ban is logically equivalent to can_distinguish at this time.
+         %if thing.can_ban:
          &#32;
          ${distinguish_setter('yes')}
-         &#32;/&#32;
+         &#32;/
+         %endif
+         
+         &#32;
          ${distinguish_setter('no')}
          &#32;
 
          %if c.user_is_admin:
          /&#32;
          ${distinguish_setter('admin')}
+         &#32;
+         %endif
+         
+         %if c.user_special_distinguish:
+         /&#32;
+         ${distinguish_setter(c.user_special_distinguish['name'], 'special')}
          &#32;
          %endif
 
@@ -104,11 +132,11 @@
     %if getattr(thing, "moderator_banned", None):
       <!-- pass -->
     %elif thing._spam:
-      ${pretty_button(_("confirm %(obj)s removal") % dict(obj=kind),
-      "big_mod_action", -1, "negative")}
+      ${pretty_button(_("confirm spam"), "big_mod_action", -2, "negative")}
+      ${pretty_button(_("remove ham"), "big_mod_action", -1, "neutral")}
     %else:
-      ${pretty_button(_("remove %(obj)s") % dict(obj=kind),
-                      "big_mod_action", -1, "negative")}
+      ${pretty_button(_("spam"), "big_mod_action", -2, "negative")}
+      ${pretty_button(_("remove"), "big_mod_action", -1, "neutral")}
     %endif
 
     %if getattr(thing, "approval_checkmark", None):
@@ -120,10 +148,13 @@
     %endif
 
     &#32;
-    <span class="removed" style="display:none">
+    <span class="status-msg spammed">
+      ${_("spammed")}
+    </span>
+    <span class="status-msg removed">
       ${_("removed")}
     </span>
-    <span class="approved" style="display:none">
+    <span class="status-msg approved">
       ${_("approved")}
     </span>
   </span>
@@ -143,10 +174,12 @@
       ${self.simple_button(_("edit"), "edit_usertext", css_class="edit-usertext")}
     </li>
   %endif
+  % if c.user_is_loggedin or not g.read_only_mode:
   <li class="share">
     ${self.toggle_button("share-button", _("share"), _("cancel"),
                          "share", "cancelShare", login_required = True)}
   </li>
+  % endif
   %if thing.is_loggedin:
     <li>
     %if thing.saved:
@@ -245,6 +278,13 @@
     <li>
       ${self.bylink_button(_("context"), thing.permalink + "?context=3")}
     </li>
+    <li class="first">
+    ${self.comment_button("comment", _("full comments"), 
+                          thing.full_comment_path,
+                          _sr_path = True, 
+                          a_class = None, 
+                          newwindow = thing.new_window)}
+    </li>
   %endif
   %if thing.deleted:
     %if thing.parent_permalink and not thing.profilepage:
@@ -296,16 +336,21 @@
   %endif
   %if thing.recipient:
     ${self.banbuttons()}
+      %if not thing.was_comment and thing.thing.author_id != c.user._id and thing.thing.author_id not in c.user.enemies:
+        <li>
+          ${ynbutton(_("block user"), _("blocked"), "block", "hide_thing")}
+        </li>
+      %endif
     <li class="unread">
      ${self.state_button("unread", _("mark unread"), \
         "return change_state(this, 'unread_message', unread_thing, true);", \
          _("unread"))}
     </li>
-    %if thing.can_reply:
-      <li>
-         ${self.simple_button(_("reply {verb}"), "reply")}
-      </li>
-    %endif
+  %endif
+  %if thing.can_reply:
+    <li>
+       ${self.simple_button(_("reply {verb}"), "reply")}
+    </li>
   %endif
 </%def>
 
@@ -348,21 +393,22 @@
                      question = None,
                      format = '%(link)s',
                      format_arg = 'link',
-                     hidden_data = {})">
+                     hidden_data = {},
+                     _class = '')">
   <%
      if question is None:
          question = _("are you sure?")
-     link = ('<a href="#" onclick="return toggle(this)">'
+     link = ('<a href="#" class="togglebutton" onclick="return toggle(this)">'
              + title + '</a>')
      link = format % {format_arg : link}
      link = unsafe(link.replace(" <", "&#32;<").replace("> ", ">&#32;"))
    %>
-  <form class="toggle ${op}-button" action="#" method="get">
+  <form class="toggle ${op}-button ${_class}" action="#" method="get">
     <input type="hidden" name="executed" value="${executed}"/>
     %for k, v in hidden_data.iteritems():
       <input type="hidden" name="${k}" value="${v}"/>
     %endfor
-    <span class="option active">
+    <span class="option main active">
       ${link}
     </span>
     <span class="option error">
@@ -394,12 +440,11 @@
        callback, cancelback = cancelback, callback
        title, alt_title = alt_title, title
        css_class, alt_css_class = alt_css_class, css_class
+   extra_class = "login-required" if login_required else ""
  %>
 <span class="${class_name} toggle" style="${style}">
- <a class="option active ${css_class}" href="#" tabindex="100"
-    %if login_required and not c.user_is_loggedin:
-      onclick="return showcover('', '${callback}_' + $(this).thing_id());"
-    %else:
+ <a class="option active ${css_class} ${extra_class}" href="#" tabindex="100"
+    %if not login_required or c.user_is_loggedin:
       onclick="return toggle(this, ${callback}, ${cancelback})"
     %endif
     >

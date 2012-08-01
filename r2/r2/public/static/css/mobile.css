@@ -2,7 +2,6 @@ body {
      font-family: verdana,arial,helvetica,sans-serif;
      margin: 0;
      padding: 0;
-     font-size: x-small;
      color: #888;
 }
 
@@ -17,23 +16,27 @@ p {
   }
 
 ul {
-   margin: 0px;
+   margin: 5px;
    padding: 0px;
    list-style: none;
    }
 
 .link {
+      padding: 5px 5px 5px 5px;
+      /*padding-top: 5px;
+      padding-bottom: 5px;
       margin-left: 2px;
+      display: inline;*/
       }
 
 .title {
-       color: blue;
-       font-size: small;
-       margin-right: .5em;
+       color: black;
        }
 
 .byline {
 	margin: 0px 0px .5em 2px;
+        display: inline;
+        font-size: small;
         }
 
 .description {
@@ -44,23 +47,33 @@ ul {
         color: #369;
         }
 
-.buttons {
-         font-weight: bold;
-         }
+.comment .md, .subreddit .md {
+    color: black;
+}
+
+.link .md {
+    color: black;
+    margin: 5px 5px 10px 5px;
+}
+
+.comment .child {
+    border-left: 1px dotted #DDF;
+}
 
 .child {
-       margin-left: 2em;
+       padding-left: 1em;
+       margin-left: 1em;
+       border-left: 1px dotted #DDF;
        }
 
 .headerbar {
-           background:lightgray none repeat scroll 0%;
+           background-color: lightgrey;
 	   margin: 5px 0px 5px 2px;
 }
 
 .headerbar span {
            background-color: white;
            color: gray;
-           font-size: x-small;
            font-weight: bold;
            margin-left: 15px;
            padding: 0px 3px;
@@ -81,6 +94,7 @@ ul {
 
 .tabmenu {
     list-style-type: none;
+    display: inline;
 }
 
 .tabmenu li {
@@ -133,3 +147,6 @@ ul {
 .md img { display: none }
 .md ol, .md ul { margin: 10px 2em; }
 .md pre { margin: 10px; }
+.flair, .linkflair { color: #545454; background-color: #F5F5F5; border: 1px solid #DEDEDE; }
+.linkflair { display: inline-block; font-size: small; max-width: 10em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+a.author, .flair, .linkflair { margin-right: 0.5em }

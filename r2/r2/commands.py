@@ -11,14 +11,15 @@
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
 # the specific language governing rights and limitations under the License.
 #
-# The Original Code is Reddit.
+# The Original Code is reddit.
 #
-# The Original Developer is the Initial Developer.  The Initial Developer of the
-# Original Code is CondeNet, Inc.
+# The Original Developer is the Initial Developer.  The Initial Developer of
+# the Original Code is reddit Inc.
 #
-# All portions of the code written by CondeNet are Copyright (c) 2006-2010
-# CondeNet, Inc. All Rights Reserved.
-################################################################################
+# All portions of the code written by reddit are Copyright (c) 2006-2012 reddit
+# Inc. All Rights Reserved.
+###############################################################################
+
 import paste.deploy.config
 import paste.fixture
 from paste.registry import RegistryManager
@@ -49,18 +50,32 @@ class RunCommand(command.Command):
     parser.add_option('-c', '--command',
                       dest='command',
                       help="execute command in module")
+    parser.add_option("", "--proctitle",
+                      dest="proctitle",
+                      help="set the title seen by ps and top")
 
     def command(self):
-        config_name = 'config:%s' % self.args[0]
+        try:
+            if self.options.proctitle:
+                import setproctitle
+                setproctitle.setproctitle("paster " + self.options.proctitle)
+        except ImportError:
+            pass
+
         here_dir = os.getcwd()
 
-        conf = appconfig(config_name, relative_to=here_dir)
-        conf.global_conf['running_as_script'] = True
-        conf.update(dict(app_conf=conf.local_conf,
-                         global_conf=conf.global_conf))
-        paste.deploy.config.CONFIG.push_thread_config(conf)
+        if self.args[0].lower() == 'standalone':
+            load_environment(setup_globals=False)
+        else:
+            config_name = 'config:%s' % self.args[0]
 
-        load_environment(conf.global_conf, conf.local_conf)
+            conf = appconfig(config_name, relative_to=here_dir)
+            conf.global_conf['running_as_script'] = True
+            conf.update(dict(app_conf=conf.local_conf,
+                             global_conf=conf.global_conf))
+            paste.deploy.config.CONFIG.push_thread_config(conf)
+
+            load_environment(conf.global_conf, conf.local_conf)
 
         # Load locals and populate with objects for use in shell
         sys.path.insert(0, here_dir)
@@ -86,12 +101,7 @@ class RunCommand(command.Command):
         loaded_namespace = {}
 
         if self.args[1:]:
-            cmd = self.args[1]
-            f = open(cmd);
-            data = f.read()
-            f.close()
-            
-            exec data in loaded_namespace
-            
+            execfile(self.args[1], loaded_namespace)
+
         if self.options.command:
             exec self.options.command in loaded_namespace

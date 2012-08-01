@@ -9,17 +9,43 @@ function open_menu(menu) {
         .addClass("active inuse");
 };
 
-function close_menus() {
+function close_menus(event) {
     $(".drop-choices.inuse").not(".active")
         .removeClass("inuse");
     $(".drop-choices.active").removeClass("active");
+
+    // Clear any flairselectors that may have been opened.
+    $(".flairselector").empty();
+
+    /* hide the search expando if the user clicks elsewhere on the page */ 
+    if ($(event.target).closest("#search").length == 0) {
+        $("#moresearchinfo").slideUp();
+
+        if ($("#searchexpando").length == 1) {
+            $("#searchexpando").slideUp(function() {
+                $("#search_showmore").parent().show();
+            });
+        } else {
+            $("#search_showmore").parent().show();
+        }
+    }
 };
 
 function hover_open_menu(menu) { };
 
+function select_tab_menu(tab_link, tab_name) {
+    var target = "tabbedpane-" + tab_name;
+    var menu = $(tab_link).parent().parent().parent();
+    menu.find(".tabmenu li").removeClass("selected");
+    $(tab_link).parent().addClass("selected");
+    menu.find(".tabbedpane").each(function() {
+        this.style.display = (this.id == target) ? "block" : "none";
+      });
+}
+
 function update_user(form) {
   try {
-    var user = $(form).find("input[name=user]").val();
+    var user = $(form).find('input[name="user"]').val();
     form.action += "/" + user;
   } catch (e) {
     // ignore
@@ -29,7 +55,7 @@ function update_user(form) {
 }
 
 function post_user(form, where) {
-  var user = $(form).find("input[name=user]").val();
+  var user = $(form).find('input[name="user"]').val();
 
   if (user == null) {
     return post_form (form, where);
@@ -62,8 +88,8 @@ function get_form_fields(form, fields, filter_func) {
             var type = $(this).attr("type");
             if (filter_func(this) && 
                 ( (type != "radio" && type != "checkbox") || 
-                  $(this).attr("checked")) )
-                fields[$(this).attr("name")] = $(this).attr("value");
+                  $(this).is(":checked")) )
+                fields[$(this).attr("name")] = $(this).val();
         });
     if (fields.id == null) {
         fields.id = $(form).attr("id") ? ("#" + $(form).attr("id")) : "";
@@ -98,8 +124,8 @@ function post_pseudo_form(form, where, block) {
 }
 
 function emptyInput(elem, msg) {
-    if (! $(elem).attr("value") || $(elem).attr("value") == msg ) 
-        $(elem).addClass("gray").attr("value", msg).attr("rows", 3);
+    if (! $(elem).val() || $(elem).val() == msg ) 
+        $(elem).addClass("gray").val(msg).attr("rows", 3);
     else
         $(elem).focus(function(){});
 };
@@ -107,17 +133,6 @@ function emptyInput(elem, msg) {
 
 function showlang() {
     $(".lang-popup:first").show();
-    return false;
-};
-
-function showcover(warning, reason) {
-    $.request("new_captcha");
-    if (warning) 
-        $("#cover_disclaim, #cover_msg").show();
-    else
-        $("#cover_disclaim, #cover_msg").hide();
-    $(".login-popup:first").show()
-        .find("form input[name=reason]").attr("value", (reason || ""));
     return false;
 };
 
@@ -140,9 +155,9 @@ function deleteRow(elem) {
 function change_state(elem, op, callback, keep) {
     var form = $(elem).parents("form");
     /* look to see if the form has an id specified */
-    var id = form.find("input[name=id]");
+    var id = form.find('input[name="id"]');
     if (id.length) 
-        id = id.attr("value");
+        id = id.val();
     else /* fallback on the parent thing */
         id = $(elem).thing_id();
 
@@ -152,7 +167,7 @@ function change_state(elem, op, callback, keep) {
         callback(form.length ? form : elem, op);
     }
     if(!$.defined(keep)) {
-        form.html(form.attr("executed").value);
+        form.html(form.find('[name="executed"]').val());
     }
     return false;
 };
@@ -201,19 +216,23 @@ function click_thing(elem) {
 }
 
 function hide_thing(elem) {
-    $(elem).thing().fadeOut(function(elem) { 
-            $(this).toggleClass("hidden") });
+    $(elem).thing().fadeOut(function() {
+            $(this).toggleClass("hidden");
+            unexpando_child(elem);
+    });
 };
 
 function toggle_label (elem, callback, cancelback) {
   $(elem).parent().find(".option").toggle();
-  $(elem).onclick = function() {
+  $(elem)[0].onclick = function() {
     return(toggle_label(elem, cancelback, callback));
   }
   if (callback) callback(elem);
 }
 
 function toggle(elem, callback, cancelback) {
+    r.analytics.breadcrumbs.storeLastClick(elem)
+
     var self = $(elem).parent().andSelf().filter(".option");
     var sibling = self.removeClass("active")
         .siblings().addClass("active").get(0); 
@@ -310,32 +329,33 @@ function linkstatus(form) {
 
 function subscribe(reddit_name) {
     return function() { 
-        if (!reddit.logged)  {
-            showcover();
-        } else {
+        if (reddit.logged) {
+            if (reddit.cur_site == reddit_name) {
+                $('body').addClass('subscriber');
+            }
             $.things(reddit_name).find(".entry").addClass("likes");
             $.request("subscribe", {sr: reddit_name, action: "sub"});
+            r.analytics.fireUITrackingPixel("sub", reddit_name)
         }
     };
 };
 
 function unsubscribe(reddit_name) {
     return function() { 
-        if (!reddit.logged)  {
-            showcover();
-        } else {
+        if (reddit.logged) {
+            if (reddit.cur_site == reddit_name) {
+                $('body').removeClass('subscriber');
+            }
             $.things(reddit_name).find(".entry").removeClass("likes");
             $.request("subscribe", {sr: reddit_name, action: "unsub"});
+            r.analytics.fireUITrackingPixel("unsub", reddit_name)
         }
     };
 };
 
 function friend(user_name, container_name, type) {
     return function() {
-        if (!reddit.logged)  {
-            showcover();
-        }
-        else {
+        if (reddit.logged) {
             encoded = encodeURIComponent(reddit.referer);
             $.request("friend?note=" + encoded,
                       {name: user_name, container: container_name, type: type});
@@ -460,76 +480,6 @@ function moremessages(elem) {
 
 /* stylesheet and CSS stuff */
 
-function update_reddit_count(site) {
-    if (!site || !reddit.logged) return;
-    
-    var decay_factor = .9; //precentage to keep
-    var decay_period = 86400; //num of seconds between updates
-    var num_recent = 10; //num of recent reddits to report
-    var num_count = 100; //num of reddits to actually count
-    
-    var date_key = '_date';
-    var cur_date = new Date();
-    var count_cookie = 'reddit_counts';
-    var recent_cookie = 'recent_reddits';
-    var reddit_counts = $.cookie_read(count_cookie).data;
-    
-    //init the reddit_counts dict
-    if (!$.defined(reddit_counts) ) {
-        reddit_counts = {};
-        reddit_counts[date_key] = cur_date.toString();
-    }
-    var last_reset = new Date(reddit_counts[date_key]);
-    var decay = cur_date - last_reset > decay_period * 1000;
-
-    //incrmenet the count on the current reddit
-    reddit_counts[site] = $.with_default(reddit_counts[site], 0) + 1;
-
-    //collect the reddit names (for sorting) and decay the view counts
-    //if necessary
-    var names = [];
-    $.each(reddit_counts, function(sr_name, value) {
-            if(sr_name != date_key) {
-                if (decay && sr_name != site) {
-                    //compute the new count val
-                    var val = Math.floor(decay_factor * reddit_counts[sr_name]);
-                    if (val > 0) 
-                        reddit_counts[sr_name] = val;
-                    else 
-                        delete reddit_counts[sr_name];
-                }
-                if (reddit_counts[sr_name]) 
-                    names.push(sr_name);
-            }
-        });
-
-    //sort the names by the view counts
-    names.sort(function(n1, n2) {
-            return reddit_counts[n2] - reddit_counts[n1];
-        });
-
-    //update the last decay date
-    if (decay) reddit_counts[date_key] = cur_date.toString();
-
-    //build the list of names to report as "recent"
-    var recent_reddits = "";
-    for (var i = 0; i < names.length; i++) {
-        var sr_name = names[i];
-        if (i < num_recent) {
-            recent_reddits += names[i] + ',';
-        } else if (i >= num_count && sr_name != site) {
-            delete reddit_counts[sr_name];
-        }
-    }
-
-    //set the two cookies: one for the counts, one for the final
-    //recent list
-    $.cookie_write({name: count_cookie, data: reddit_counts});
-    if (recent_reddits) 
-        $.cookie_write({name: recent_cookie, data: recent_reddits});
-};
-
-
 function add_thing_to_cookie(thing, cookie_name) {
     var id = $(thing).thing_id();
 
@@ -551,9 +501,9 @@ function add_thing_id_to_cookie(id, cookie_name) {
 
     cookie.data = id + ',' + cookie.data;
 
-    if(cookie.data.length > 1000) {
-        var fullnames = cookie.data.split(',');
-        fullnames = $.uniq(fullnames, 20);
+    var fullnames = cookie.data.split(',');
+    if(fullnames.length > 5) {
+        fullnames = $.uniq(fullnames, 5);
         cookie.data = fullnames.join(',');
     }
 
@@ -591,32 +541,9 @@ function updateEventHandlers(thing) {
     thing = $(thing);
     var listing = thing.parent();
 
-    $(thing).filter(".promotedlink, .sponsorshipbox")
-        .bind("onshow", function() {
-            var id = $(this).thing_id();
-            if($.inArray(id, reddit.tofetch) != -1) {
-                $.request("onload", {ids: reddit.tofetch.join(",")});
-                reddit.tofetch = [];
-            }
-            var tracker = reddit.trackers[id]; 
-            if($.defined(tracker)) {
-                $(this).find("a.title").attr("href", tracker.click).end()
-                    .find("a.thumbnail").attr("href", tracker.click).end()
-                    .find("img.promote-pixel")
-                    .attr("src", tracker.show);
-                delete reddit.trackers[id];
-            }
-        })
-        /* pre-trigger new event if already shown */
-        .filter(":visible").trigger("onshow");
-
     /* click on a title.. */
     $(thing).filter(".link")
         .find("a.title, a.comments").mousedown(function() {
-            /* the site is either stored in the sr dict, or we are on
-             * an sr and it is the current one */
-            var sr = reddit.sr[$(this).thing_id()] || reddit.cur_site;
-            update_reddit_count(sr);
             /* mark as clicked */
             $(this).addClass("click");
             /* set the click cookie. */
@@ -699,7 +626,7 @@ function last_click(thing, organic) {
               
               /* and ask the server to fill it in */
               $.request('fetch_links',
-                        {links: [current.what],
+                        {links: current.what,
                                 show: current.what,
                                 listing: olisting.attr('id')});
           }
@@ -789,7 +716,7 @@ function sr_search(query) {
     query = query.toLowerCase();
     var cache = sr_cache();
     if (!cache[query]) {
-        $.request('search_reddit_names', {query: query},
+        $.request('search_reddit_names.json', {query: query},
                   function (r) {
                       cache[query] = r['names'];
                       update_dropdown(r['names']);
@@ -1001,7 +928,7 @@ function comment_reply_for_elem(elem) {
     if (!form.length || form.parent().thing_id() != thing.thing_id()) {
         form = $(".usertext.cloneable:first").clone(true);
         elem.new_thing_child(form);
-        form.attr("thing_id").value = thing_id;
+        form.prop("thing_id").value = thing_id;
         form.attr("id", "commentreply_" + thing_id);
         form.find(".error").hide();
     }
@@ -1015,9 +942,9 @@ function edit_usertext(elem) {
 }
 
 function cancel_usertext(elem) {
-    var t = $(elem).thing().debug();
-    t.find(".edit-usertext:first").parent("li").andSelf().show(); 
-    hide_edit_usertext(t.find(".usertext:first"));
+    var t = $(elem);
+    t.thing().find(".edit-usertext:first").parent("li").andSelf().show(); 
+    hide_edit_usertext(t.closest(".usertext"));
 }
 
 function save_usertext(elem) {
@@ -1158,7 +1085,7 @@ var toolbar_p = function(expanded_size, collapsed_size) {
     };
     
     this.gourl = function(form, base_url) {
-        var url = $(form).find('input[type=text]').attr('value');
+        var url = $(form).find('input[type="text"]').val();
         var newurl = base_url + escape(url);
         
         this.top_window().location.href = newurl;
@@ -1175,11 +1102,11 @@ var toolbar_p = function(expanded_size, collapsed_size) {
 };
 
 function clear_all_langs(elem) {
-    $(elem).parents("td").find("input[type=checkbox]").attr("checked", false);
+    $(elem).parents("td").find('input[type="checkbox"]').prop("checked", false);
 }
 
 function check_some_langs(elem) {
-    $(elem).parents("td").find("#some-langs").attr("checked", true);
+    $(elem).parents("td").find("#some-langs").prop("checked", true);
 }
 
 function fetch_parent(elem, parent_permalink, parent_id) {
@@ -1200,7 +1127,7 @@ function fetch_parent(elem, parent_permalink, parent_id) {
                     });
                 if(parent) {
                     /* make a parent div for the contents of the fetch */
-                    thing.find(".noncollapsed .md")
+                    thing.find(".noncollapsed .md").first() 
                         .before('<div class="parent rounded">' +
                                 $.unsafe(parent) +
                                 '</div>'); 
@@ -1221,13 +1148,16 @@ function big_mod_action(elem, dir) {
          id: thing_id
       };
 
+      elem.siblings(".status-msg").hide();
       if (dir == -1) {
+        d.spam = false;
         $.request("remove", d, null, true);
         elem.siblings(".removed").show();
-        elem.siblings(".approved").hide();
+      } else if (dir == -2) {
+        $.request("remove", d, null, true);
+        elem.siblings(".spammed").show();
       } else if (dir == 1) {
         $.request("approve", d, null, true);
-        elem.siblings(".removed").hide();
         elem.siblings(".approved").show();
       }
    }
@@ -1256,15 +1186,32 @@ function juryvote(elem, dir) {
 
 /* The ready method */
 $(function() {
+        $("body").click(close_menus);
+
         /* set function to be called on thing creation/replacement,
          * and call it on all things currently rendered in the
          * page. */
         $("body").set_thing_init(updateEventHandlers);
+
+        /* Fall back to the old ".gray" system if placeholder isn't supported
+         * by this browser */
+        if (!('placeholder' in document.createElement('input'))) {
+            $("textarea[placeholder], input[placeholder]")
+                .addClass("gray")
+                .each(function() {
+                    var element = $(this);
+                    var placeholder_text = element.attr('placeholder');
+                    if (element.val() == "") {
+                        element.val(placeholder_text);
+                    }
+                });
+        }
+
         /* Set up gray inputs and textareas to clear on focus */
         $("textarea.gray, input.gray")
             .focus( function() {
                     $(this).attr("rows", 7)
-                        .filter(".gray").removeClass("gray").attr("value", "")
+                        .filter(".gray").removeClass("gray").val("")
                         });
         /* set cookies to be from this user if there is one */
         if (reddit.logged) {
@@ -1276,23 +1223,44 @@ $(function() {
         /* set up the cookie domain */
         $.default_cookie_domain(reddit.cur_domain.split(':')[0]);
         
-        /* Count the rendering of this reddit */
-        if(reddit.cur_site)  
-           update_reddit_count(reddit.cur_site);
-
         /* visually mark the last-clicked entry */
         last_click();
 
+        /* search form help expando */
+        /* TODO: use focusin and focusout in jQuery 1.4 */
+        $('#search input[name="q"]').focus(function () {
+            $("#searchexpando").slideDown();
+        });
+
+        $("#search_showmore").click(function(event) {
+            $("#search_showmore").parent().hide();
+            $("#moresearchinfo").slideDown();
+            event.preventDefault();
+        });
+
+        $("#moresearchinfo")
+            .prepend('<a href="#" id="search_hidemore">[-]</a>')
+
+        $("#search_hidemore").click(function(event) {
+            $("#search_showmore").parent().show();
+            $("#moresearchinfo").slideUp();
+            event.preventDefault();
+        });
+        
+        /* Select shortlink text on click */
+        $("#shortlink-text").click(function() {
+            $(this).select();
+        });
     });
 
 function show_friend(account_fullname) {
     var label = '<a class="friend" title="friend" href="/prefs/friends">F</a>';
-    var ua = $(".author.id-" + account_fullname).addClass("friend")
+    var ua = $("div.content .author.id-" + account_fullname).addClass("friend")
         .next(".userattrs").each(function() {
                 if (!$(this).html()) {
                     $(this).html(" [" + label + "]");
                 } else if ($(this).find(".friend").length == 0) {
-                    $(this).find("a:last").debug().after(", " + label);
+                    $(this).find("a:first").debug().before(label+',');
                 }
             });
 }
@@ -1310,9 +1278,9 @@ function show_unfriend(account_fullname) {
 
 function search_feedback(elem, approval) {
   f = $("form#search");
-  var q    = f.find("input[name=q]").val();
-  var sort = f.find("input[name=sort]").val();
-  var t    = f.find("input[name=t]").val();
+  var q    = f.find('input[name="q"]').val();
+  var sort = f.find('input[name="sort"]').val();
+  var t    = f.find('input[name="t"]').val();
   var d = {
     q: q,
     sort: sort,
@@ -1336,6 +1304,33 @@ function highlight_new_comments(period) {
       items.removeClass("new-comment");
     }
   }
+}
+
+function save_href(link) {
+  if (!link.attr("srcurl")){
+    link.attr("srcurl", link.attr("href"));
+  }
+  return link;
+}
+
+function pure_domain(url) {
+    var domain = url.match(/:\/\/([^/]+)/)
+    if (domain) {
+        domain = domain[1].replace(/^www\./, '');
+    }
+    return domain;
+}
+
+function parse_domain(url) {
+    var domain = pure_domain(url);
+    if (!domain) {
+        /* Internal link? Get the SR name, if there is one */
+        var reddit = url.match(/\/r\/([^/]+)/)
+        if (reddit) {
+            domain = "self." + reddit[1].toLowerCase();
+        }
+    }
+    return domain;
 }
 
 function destroyCaptcha() {
